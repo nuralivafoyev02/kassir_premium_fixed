@@ -1,6 +1,6 @@
 // --- CONFIG ---
 const APP_CONFIG = window.APP_CONFIG || {};
-const SUPABASE_URL = APP_CONFIG.SUPABASE_URL || "https://yrilucqvigopgftwzecp.supabase.co";
+const SUPABASE_URL = APP_CONFIG.SUPABASE_URL || "";
 const SUPABASE_KEY = APP_CONFIG.SUPABASE_ANON_KEY || "";
 const BOT_USERNAME = APP_CONFIG.BOT_USERNAME || "";
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
