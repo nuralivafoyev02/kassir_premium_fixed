@@ -1,8 +1,10 @@
 // --- CONFIG ---
-let APP_CONFIG = {};
-let SUPABASE_URL = "";
-let SUPABASE_KEY = "";
-let BOT_USERNAME = "";
+let APP_CONFIG = {  SUPABASE_URL: 'https://yrilucqvigopgftwzecp.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlyaWx1Y3F2aWdvcGdmdHd6ZWNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NTI1NTgsImV4cCI6MjA4NzIyODU1OH0.tkwIJKRv0J9lSkzXvCxK2G5XoOyZvYy-hUUcqgcm3Ws',
+  BOT_USERNAME: 'meningkassamBot'};
+let SUPABASE_URL = "https://yrilucqvigopgftwzecp.supabase.co";
+let SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlyaWx1Y3F2aWdvcGdmdHd6ZWNwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTY1MjU1OCwiZXhwIjoyMDg3MjI4NTU4fQ.VgguQI4_nkxe9II29Dk0OsTlqH7Lzcak3joov_nrsrM";
+let BOT_USERNAME = "meningkassamBot";
 let APP_DEBUG = true;
 let APP_TIMEOUT_MS = 12000;
 let APP_INIT_TIMEOUT_MS = 15000;
