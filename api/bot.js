@@ -87,6 +87,7 @@ const md2html = (t) => String(t ?? '')
 const numFmt = n => Number(n || 0).toLocaleString('ru-RU');
 const isAdmin = userId => ADMIN_IDS.has(String(userId));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+let txSourceColumnSupported = null;
 
 function fmtDateTime(v) {
   if (!v) return '—';
@@ -103,6 +104,30 @@ function shortId(v, len = 8) {
 
 function tgErr(e) {
   return e?.response?.body?.description || e?.message || "Noma'lum xatolik";
+}
+
+function isMissingColumnError(error, column) {
+  const msg = String(error?.message || error?.details || '');
+  return msg.includes(`'${column}'`) && msg.includes('schema cache');
+}
+
+async function insertTransactions(rows, source = 'bot') {
+  const payload = (rows || []).map(row => ({ ...row }));
+
+  if (txSourceColumnSupported !== false) {
+    const withSource = payload.map(row => ({ ...row, source }));
+    const res = await db.from('transactions').insert(withSource).select();
+    if (!res.error) {
+      txSourceColumnSupported = true;
+      return res;
+    }
+    if (!isMissingColumnError(res.error, 'source')) {
+      return res;
+    }
+    txSourceColumnSupported = false;
+  }
+
+  return db.from('transactions').insert(payload).select();
 }
 
 function adminPanelMarkup() {
@@ -494,10 +519,16 @@ async function saveTx(userId, chatId, parsed, receiptUrl = null, exRate = DEFAUL
     receipt_url: receiptUrl || null,
   };
 
-  const { data, error } = await db.from('transactions').insert(row).select().single();
+  const { data, error } = await insertTransactions([row], 'bot');
   if (error) {
     logErr('save-tx', error, { userId, chatId, amount, category });
     await bot.sendMessage(chatId, '⚠️ Bazaga yozishda xatolik. Keyinroq urinib ko\'ring.').catch(() => { });
+    return null;
+  }
+
+  const saved = Array.isArray(data) ? data[0] : data;
+  if (!saved) {
+    await bot.sendMessage(chatId, '⚠️ Tranzaksiya saqlanganini tasdiqlab bo\'lmadi.').catch(() => { });
     return null;
   }
 
@@ -517,8 +548,8 @@ async function saveTx(userId, chatId, parsed, receiptUrl = null, exRate = DEFAUL
     opts
   ).catch(() => { });
 
-  log('tx-saved', { userId, id: data.id, type: data.type, amount: data.amount });
-  return data;
+  log('tx-saved', { userId, id: saved.id, type: saved.type, amount: saved.amount });
+  return saved;
 }
 
 // ─── REPORT BUILDER ──────────────────────────────────────

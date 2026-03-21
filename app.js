@@ -108,6 +108,9 @@ let myChart = null;
 let histOffset = 0;
 let hasMoreTx = true;
 let loadingMore = false;
+let txSourceColumnSupported = null;
+
+const TX_FETCH_BATCH = 500;
 
 const profileState = {
   fullName: store.get('display_name') || '',
@@ -130,6 +133,59 @@ const toMs = v => {
 };
 const normTx = r => ({ ...r, amount: Number(r.amount) || 0, ms: toMs(r.date), receipt_url: r.receipt_url || null });
 const normAll = rows => (rows || []).map(normTx);
+
+function isMissingColumnError(error, column) {
+  const msg = String(error?.message || error?.details || '');
+  return msg.includes(`'${column}'`) && msg.includes('schema cache');
+}
+
+async function insertTransactions(rows, source = 'mini_app') {
+  if (!db) throw new Error('Database client mavjud emas');
+  const payload = (rows || []).map(row => ({ ...row }));
+
+  if (txSourceColumnSupported !== false) {
+    const withSource = payload.map(row => ({ ...row, source }));
+    const res = await db.from('transactions').insert(withSource).select();
+    if (!res.error) {
+      txSourceColumnSupported = true;
+      return res;
+    }
+    if (!isMissingColumnError(res.error, 'source')) {
+      return res;
+    }
+    txSourceColumnSupported = false;
+  }
+
+  return db.from('transactions').insert(payload).select();
+}
+
+async function fetchAllTransactions() {
+  if (!db || !UID) return [];
+
+  const rows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + TX_FETCH_BATCH - 1;
+    const { data, error } = await db
+      .from('transactions')
+      .select('*')
+      .eq('user_id', UID)
+      .order('date', { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+
+    const part = data || [];
+    rows.push(...part);
+
+    if (part.length < TX_FETCH_BATCH) break;
+    from += TX_FETCH_BATCH;
+  }
+
+  return normAll(rows);
+}
+
 const vib = s => tg?.HapticFeedback?.impactOccurred(s);
 const $ = id => document.getElementById(id);
 const showOv = id => { const el = $(id); if (el) { el.classList.add('on'); } };
@@ -412,12 +468,9 @@ async function loadData() {
     renderProfileUI();
   }
 
-  const { data: tx, error: te } = await db.from('transactions').select('*')
-    .eq('user_id', UID).order('date', { ascending: false }).range(0, 19);
-  if (te) throw te;
-  txList = normAll(tx);
+  txList = await fetchAllTransactions();
   histOffset = txList.length;
-  hasMoreTx = txList.length === 20;
+  hasMoreTx = false;
 
   const { data: cd, error: ce } = await db.from('categories').select('*')
     .eq('user_id', UID).order('name');
@@ -470,34 +523,7 @@ function goTab(tab) {
 }
 
 async function loadMore() {
-  if (!hasMoreTx || loadingMore || !db) return;
-  loadingMore = true;
-  const loader = document.createElement('div');
-  loader.className = 'load-more-s';
-  loader.innerHTML = '<div class="spin small"></div>';
-  $('tx-list')?.appendChild(loader);
-
-  try {
-    const { data, error } = await db.from('transactions').select('*')
-      .eq('user_id', UID).order('date', { ascending: false })
-      .range(histOffset, histOffset + 19);
-
-    if (error) throw error;
-    const items = normAll(data);
-    if (items.length > 0) {
-      txList = [...txList, ...items];
-      histOffset += items.length;
-      hasMoreTx = items.length === 20;
-      renderHistory();
-    } else {
-      hasMoreTx = false;
-    }
-  } catch (e) {
-    console.error('[loadMore]', e);
-  } finally {
-    loadingMore = false;
-    loader.remove();
-  }
+  return;
 }
 
 function initHistScroll() {
@@ -911,15 +937,16 @@ async function submitFlow() {
   cancelFlow();
 
   if (db) {
-    const { data, error } = await db.from('transactions').insert([newTx]).select().single();
+    const { data, error } = await insertTransactions([newTx], 'mini_app');
     if (error) {
       txList = txList.filter(t => t.id !== tempId);
       renderAll();
       showErr('Saqlashda xatolik: ' + error.message);
       return;
     }
+    const saved = Array.isArray(data) ? data[0] : data;
     const i = txList.findIndex(t => t.id === tempId);
-    if (i !== -1) txList[i] = normTx({ ...txList[i], ...data, receipt: localReceipt });
+    if (i !== -1 && saved) txList[i] = normTx({ ...txList[i], ...saved, receipt: localReceipt });
   }
 }
 
@@ -1442,7 +1469,7 @@ async function doImport(e) {
         const rows = bk.txList.map(({ id, ms, receipt, ...r }) => ({
           ...r, user_id: UID, date: isoNow(r.date || ms || Date.now()),
         }));
-        const { error } = await db.from('transactions').insert(rows);
+        const { error } = await insertTransactions(rows, 'import');
         if (error) throw error;
       }
       showErr('Muvaffaqiyatli import! Qayta yuklanmoqda...');
