@@ -333,15 +333,24 @@ async function seedCats() {
 
 // ─── NAVIGATION ─────────────────────────────────────────
 function goTab(tab) {
-  vib('light');
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
-  $('view-' + tab)?.classList.add('active');
-  $('nb-' + tab)?.classList.add('active');
-  if (tab === 'dash') renderAll();
-  if (tab === 'hist') {
-    renderHistory();
-    initHistScroll();
+  try {
+    vib('light');
+    console.log('[goTab]', tab);
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
+    
+    const v = $('view-' + tab);
+    const n = $('nb-' + tab);
+    if (v) v.classList.add('active');
+    if (n) n.classList.add('active');
+    
+    if (tab === 'dash') renderAll();
+    if (tab === 'hist') {
+      renderHistory();
+      initHistScroll();
+    }
+  } catch (e) {
+    console.error('[goTab] Error:', e);
   }
 }
 
@@ -389,38 +398,55 @@ function initHistScroll() {
 
 // ─── RENDER ALL ─────────────────────────────────────────
 function renderAll() {
-  const { s, e } = getRange();
-  const sorted = [...txList].sort((a, b) => b.ms - a.ms);
-  const ranged = sorted.filter(t => t.ms >= s && t.ms <= e);
-  const shown = typeFilt === 'all' ? ranged : ranged.filter(t => t.type === typeFilt);
+  try {
+    const { s, e } = getRange();
+    const sorted = [...txList].sort((a, b) => b.ms - a.ms);
+    const ranged = sorted.filter(t => t.ms >= s && t.ms <= e);
+    const shown = typeFilt === 'all' ? ranged : ranged.filter(t => t.type === typeFilt);
 
-  const inc = shown.filter(t => t.type === 'income').reduce((a, b) => a + b.amount, 0);
-  const exp = shown.filter(t => t.type === 'expense').reduce((a, b) => a + b.amount, 0);
-  const bal = inc - exp;
+    const inc = shown.filter(t => t.type === 'income').reduce((a, b) => a + b.amount, 0);
+    const exp = shown.filter(t => t.type === 'expense').reduce((a, b) => a + b.amount, 0);
+    const bal = inc - exp;
 
-  const balEl = $('total-bal');
-  const incEl = $('total-inc');
-  const expEl = $('total-exp');
+    const balEl = $('total-bal');
+    const incEl = $('total-inc');
+    const expEl = $('total-exp');
 
-  if (balEl) {
-    balEl.classList.remove('loading');
-    if (currency === 'USD' && rate > 0) {
-      balEl.textContent = `$${fmt(bal / rate)}`;
-      incEl.textContent = `+$${fmt(inc / rate)}`;
-      expEl.textContent = `-$${fmt(exp / rate)}`;
-    } else {
-      balEl.textContent = `${fmt(bal)} so'm`;
-      incEl.textContent = `+${fmt(inc)}`;
-      expEl.textContent = `-${fmt(exp)}`;
+    if (balEl) {
+      balEl.classList.remove('loading');
+      let txt = '';
+      if (currency === 'USD' && rate > 0) {
+        txt = `$${fmt(bal / rate)}`;
+        incEl.textContent = `+$${fmt(inc / rate)}`;
+        expEl.textContent = `-$${fmt(exp / rate)}`;
+      } else {
+        txt = `${fmt(bal)} so'm`;
+        incEl.textContent = `+${fmt(inc)}`;
+        expEl.textContent = `-${fmt(exp)}`;
+      }
+      balEl.textContent = txt;
+      updateBalSize(txt);
     }
+
+    const tci = $('tc-i'), tce = $('tc-e');
+    if (tci) { tci.classList.toggle('on-i', typeFilt === 'income'); }
+    if (tce) { tce.classList.toggle('on-e', typeFilt === 'expense'); }
+
+    renderChart(shown);
+    renderTrends();
+  } catch (e) {
+    console.error('[renderAll] Error:', e);
   }
+}
 
-  const tci = $('tc-i'), tce = $('tc-e');
-  if (tci) { tci.classList.toggle('on-i', typeFilt === 'income'); }
-  if (tce) { tce.classList.toggle('on-e', typeFilt === 'expense'); }
-
-  renderChart(shown);
-  renderTrends();
+function updateBalSize(txt) {
+  const el = $('total-bal');
+  if (!el) return;
+  el.classList.remove('sm', 'xs', 'xxs');
+  const len = txt.length;
+  if (len > 18) el.classList.add('xxs');
+  else if (len > 14) el.classList.add('xs');
+  else if (len > 10) el.classList.add('sm');
 }
 
 function renderChart(data) {
@@ -505,24 +531,25 @@ function renderTrends() {
 }
 
 function renderHistory() {
-  const list = $('tx-list');
-  const empty = $('empty-s');
-  if (!list) return;
+  try {
+    const list = $('tx-list');
+    const empty = $('empty-s');
+    if (!list) return;
 
-  const sorted = [...txList].sort((a, b) => b.ms - a.ms);
-  const filtered = histFilt === 'all' ? sorted : sorted.filter(t => t.type === histFilt);
+    const sorted = [...txList].sort((a, b) => b.ms - a.ms);
+    const filtered = histFilt === 'all' ? sorted : sorted.filter(t => t.type === histFilt);
 
-  if (empty) empty.style.display = filtered.length === 0 ? 'flex' : 'none';
+    if (empty) empty.style.display = filtered.length === 0 ? 'flex' : 'none';
 
-  list.innerHTML = filtered.map(t => {
-    const isI = t.type === 'income';
-    const dt = new Date(t.ms);
-    const dateStr = dt.toLocaleDateString() + ' · ' + dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const chek = (t.receipt || t.receipt_url) ? `<span class="chek-b">📎 Chek</span>` : '';
-    const arrow = isI
-      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`
-      : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>`;
-    return `<div class="txi" onclick="openAction(${t.id})">
+    list.innerHTML = filtered.map(t => {
+      const isI = t.type === 'income';
+      const dt = new Date(t.ms);
+      const dateStr = dt.toLocaleDateString() + ' · ' + dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const chek = (t.receipt || t.receipt_url) ? `<span class="chek-b">📎 Chek</span>` : '';
+      const arrow = isI
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>`;
+      return `<div class="txi" onclick="openAction(${t.id})">
       <div class="txi-l">
         <div class="txi-ico ${isI ? 'i' : 'e'}">${arrow}</div>
         <div>
@@ -532,7 +559,10 @@ function renderHistory() {
       </div>
       <div class="txi-amt ${isI ? 'i' : 'e'}">${isI ? '+' : '-'}${fmt(t.amount)}</div>
     </div>`;
-  }).join('');
+    }).join('');
+  } catch (e) {
+    console.error('[renderHistory] Error:', e);
+  }
 }
 
 function setHistFilter(f) {
@@ -629,7 +659,14 @@ function formatInputAmount(e) {
 // Bo'shliqlarni olib tashlash va sof raqam olish
 function getCleanAmount(val) {
   if (!val && val !== 0) return 0;
-  return parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+  let s = String(val).trim();
+  // Minglik ajratuvchi (nuqta yoki bo'shliq)ni olib tashlash: 500.000 -> 500000
+  s = s.replace(/[. ](?=\d{3}(?:\D|$))/g, '');
+  // Vergulni nuqtaga almashtirish (decimal separator): 1,5 -> 1.5
+  s = s.replace(/,/g, '.');
+  // Qolgan bo'shliqlarni olib tashlash
+  s = s.replace(/\s/g, '');
+  return parseFloat(s) || 0;
 }
 
 // Settings rate inputi uchun

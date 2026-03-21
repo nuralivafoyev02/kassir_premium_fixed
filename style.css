@@ -1424,6 +1424,31 @@ body {
     letter-spacing: -0.3px;
 }
 
+.sh-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 32px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.05);
+    border: none;
+    border-radius: 50%;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+    z-index: 10;
+}
+
+.sh-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    transform: rotate(90deg);
+}
+
 .as-b {
     width: 100%;
     display: flex;
@@ -1603,47 +1628,63 @@ body {
 #icon-grid {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
-    gap: 8px;
-    max-height: 130px;
+    gap: 12px;
+    max-height: 280px;
     overflow-y: auto;
-    margin-top: 8px;
-    scrollbar-width: none;
+    margin-top: 12px;
+    padding: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent) transparent;
 }
 
 #icon-grid::-webkit-scrollbar {
-    display: none;
+    width: 4px;
+}
+
+#icon-grid::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 10px;
 }
 
 .io {
-    background: var(--surface2);
+    background: rgba(255, 255, 255, 0.03);
     border: 1.5px solid var(--border);
-    border-radius: 12px;
-    padding: 10px;
+    border-radius: 14px;
+    aspect-ratio: 1/1;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.io:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(139, 92, 246, 0.4);
+    transform: translateY(-2px);
 }
 
 .io.on {
     border-color: var(--accent);
-    background: rgba(139, 92, 246, 0.15);
+    background: rgba(139, 92, 246, 0.2);
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.2);
 }
 
 .io:active {
-    transform: scale(0.9);
+    transform: scale(0.92);
 }
 
 .io svg {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     stroke: var(--muted);
     stroke-width: 1.8;
+    transition: stroke 0.2s;
 }
 
 .io.on svg {
-    stroke: #a78bfa;
+    stroke: #fff;
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5));
 }
 
 /* ─── SETTINGS ────────────────────────────────── */
@@ -2046,3 +2087,8 @@ body.light .header-title {
     height: 20px;
     border-width: 2px;
 }
+
+/* ─── DYNAMIC FONT SIZES ──────────────────────── */
+.bc-amount.sm { font-size: 34px; letter-spacing: -1px; }
+.bc-amount.xs { font-size: 28px; letter-spacing: -0.8px; }
+.bc-amount.xxs { font-size: 22px; letter-spacing: -0.5px; }
