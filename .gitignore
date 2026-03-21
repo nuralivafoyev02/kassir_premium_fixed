@@ -1,17 +1,21 @@
-.env
-.env.example
+# Dependencies
 node_modules/
-dist/
-build/
-coverage/
+
+# macOS
 .DS_Store
-*.log
-.idea/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories
 .vscode/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-supabase.sql
-webhook-commands.txt
+
+# database sql editor
+*.sql
