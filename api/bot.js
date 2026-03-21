@@ -88,7 +88,7 @@ const numFmt = n => Number(n || 0).toLocaleString('ru-RU');
 // GPT orkali matndan (ovozli xabardan) ma'lumotlarni olish
 async function gptParse(text) {
   if (!openai || !text) return null;
-  
+
   try {
     const prompt = `Ushbu o'zbek tilidagi moliyaviy xabardan summa (amount), tur (type: income yoki expense) va kategoriyani (category) JSON formatida aniqlab ber.
 Xabar: "${text}"
@@ -110,7 +110,7 @@ Agar tushunarsiz bo'lsa, null qaytaring.`;
 
     const data = JSON.parse(res.choices[0].message.content);
     if (!data || !data.amount) return null;
-    
+
     return {
       amount: Math.round(data.amount),
       type: data.type || 'expense',
@@ -691,7 +691,7 @@ module.exports = async (req, res) => {
 
       } catch (e) {
         logErr('voice', e, { userId });
-        if (proc) await bot.editMessageText('⚠️ Ovozli xabarni qayta ishlashda xatolik yuz berdi. Matn orqali yozib yuboring.', { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
+        if (proc) await bot.editMessageText('😕 Ovozli xabarni qayta ishlashda xatolik yuz berdi. Matn orqali yozib yuboring.', { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
       } finally {
         if (fs.existsSync(tmpPath)) fs.unlink(tmpPath, () => { });
       }
