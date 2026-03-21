@@ -25,7 +25,7 @@ export function BalanceCard() {
     <div className="balance-card" onClick={() => setShowUsd(!showUsd)}>
       <div className="bc-label">UMUMIY BALANS</div>
       <div className={`bc-amount ${loading ? 'loading' : ''}`}>
-        {fmt(displayBalance)} {showUsd ? '$' : "so'm"}
+        {showUsd ? '$' : ''}{fmt(displayBalance)} {!showUsd ? "so'm" : ""}
       </div>
       
       <div className="bc-pills">
@@ -36,7 +36,7 @@ export function BalanceCard() {
       <div className="bc-row">
         <div className="bcs">
           <div className="bcs-ico i">
-            <TrendingUp />
+            <TrendingUp size={20}/>
           </div>
           <div>
             <div className="bcs-lbl">Kirim</div>
@@ -46,7 +46,7 @@ export function BalanceCard() {
         
         <div className="bcs">
           <div className="bcs-ico e">
-            <TrendingDown />
+            <TrendingDown size={20}/>
           </div>
           <div>
             <div className="bcs-lbl">Chiqim</div>

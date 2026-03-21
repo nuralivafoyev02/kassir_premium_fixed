@@ -12,12 +12,12 @@ export function TransactionItem({ transaction, onClick }) {
     <div className="txi" onClick={onClick}>
       <div className="txi-l">
         <div className={`txi-ico ${isIncome ? 'i' : 'e'}`}>
-          {isIncome ? <TrendingUp size={18}/> : <TrendingDown size={18}/>}
+          {isIncome ? '📈' : '📉'}
         </div>
         <div>
           <div className="txi-cat">{transaction.category}</div>
-          <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <Calendar size={10}/> {dateStr}, {timeStr}
+          <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+            {dateStr}, {timeStr}
           </div>
         </div>
       </div>

@@ -10,8 +10,8 @@ export function Header({ onOpenSettings }) {
       <div className="header-left">
         <div className="header-logo">💰</div>
         <div>
-          <h1 className="header-title">Kassa</h1>
-          <p className="header-sub">{tgUser?.first_name || 'Salom'}</p>
+          <div className="header-title">Kassa</div>
+          <div className="header-sub">{tgUser?.first_name || 'Salom'}</div>
         </div>
       </div>
       <div className="header-actions">

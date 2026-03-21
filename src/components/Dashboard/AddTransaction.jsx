@@ -68,10 +68,10 @@ export function AddTransaction({ onSave }) {
         {step === 'type' && (
           <div id="flow-start">
             <button className="fbtn i" onClick={() => { setType('income'); setStep('cat'); haptic?.('light'); }}>
-              <TrendingUp /> Kirim
+              📈 Kirim
             </button>
             <button className="fbtn e" onClick={() => { setType('expense'); setStep('cat'); haptic?.('light'); }}>
-              <TrendingDown /> Chiqim
+              📉 Chiqim
             </button>
           </div>
         )}

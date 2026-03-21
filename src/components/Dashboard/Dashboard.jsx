@@ -34,20 +34,20 @@ export function Dashboard() {
           className={`tc ${typeFilter === 'income' ? 'active' : ''}`} 
           onClick={() => setTypeFilter(typeFilter === 'income' ? 'all' : 'income')}
         >
-          <div className="tc-ico i">📈</div>
+          <div className="tc-ico">📈</div>
           <div>
             <div className="tc-ttl">Kirimlar</div>
-            <div className="tc-sub i">{typeFilter === 'income' ? 'Filtrlangan' : 'Filtrlash'}</div>
+            <div className="tc-sub">Filterlash</div>
           </div>
         </div>
         <div 
           className={`tc ${typeFilter === 'expense' ? 'active' : ''}`} 
           onClick={() => setTypeFilter(typeFilter === 'expense' ? 'all' : 'expense')}
         >
-          <div className="tc-ico e">📉</div>
+          <div className="tc-ico">📉</div>
           <div>
             <div className="tc-ttl">Chiqimlar</div>
-            <div className="tc-sub e">{typeFilter === 'expense' ? 'Filtrlangan' : 'Filtrlash'}</div>
+            <div className="tc-sub">Filterlash</div>
           </div>
         </div>
       </div>

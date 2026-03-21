@@ -8,22 +8,22 @@ export function Navigation({ activeView, onViewChange }) {
         className={`nb ${activeView === 'dash' ? 'active' : ''}`} 
         onClick={() => onViewChange('dash')}
       >
-        <Home />
+        <Home size={22}/>
         <span>Bosh</span>
       </button>
 
       <button className={`nb ${activeView === 'add' ? 'active' : ''}`} onClick={() => onViewChange('add')}>
         <div className="add-ring">
-          <Plus />
+          <Plus size={28}/>
         </div>
-        <p className="add-btn-txt">Qo'shish</p>
+        <span className="add-btn-txt">Qo'shish</span>
       </button>
       
       <button 
         className={`nb ${activeView === 'hist' ? 'active' : ''}`} 
         onClick={() => onViewChange('hist')}
       >
-        <History />
+        <History size={22}/>
         <span>Tarix</span>
       </button>
     </nav>
