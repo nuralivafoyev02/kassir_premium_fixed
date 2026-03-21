@@ -2033,3 +2033,16 @@ body.light .header-title {
     -webkit-text-fill-color: #111827;
     background: none;
 }
+/* ─── PAGINATION ──────────────────────────────── */
+.load-more-s {
+    display: flex;
+    justify-content: center;
+    padding: 24px;
+    width: 100%;
+}
+
+.spin.small {
+    width: 20px;
+    height: 20px;
+    border-width: 2px;
+}

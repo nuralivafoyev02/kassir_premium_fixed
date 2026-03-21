@@ -101,6 +101,9 @@ let pinBuf = '';
 let pinTemp = '';
 let bioAvail = false;
 let myChart = null;
+let histOffset = 0;
+let hasMoreTx = true;
+let loadingMore = false;
 
 // ─── HELPERS ────────────────────────────────────────────
 const fmt = n => {
@@ -295,9 +298,11 @@ async function loadData() {
   if (u?.exchange_rate) { rate = Number(u.exchange_rate) || rate; store.set('rate', rate); }
 
   const { data: tx, error: te } = await db.from('transactions').select('*')
-    .eq('user_id', UID).order('date', { ascending: false });
+    .eq('user_id', UID).order('date', { ascending: false }).range(0, 19);
   if (te) throw te;
   txList = normAll(tx);
+  histOffset = txList.length;
+  hasMoreTx = txList.length === 20;
 
   const { data: cd, error: ce } = await db.from('categories').select('*')
     .eq('user_id', UID).order('name');
@@ -334,7 +339,52 @@ function goTab(tab) {
   $('view-' + tab)?.classList.add('active');
   $('nb-' + tab)?.classList.add('active');
   if (tab === 'dash') renderAll();
-  if (tab === 'hist') renderHistory();
+  if (tab === 'hist') {
+    renderHistory();
+    initHistScroll();
+  }
+}
+
+async function loadMore() {
+  if (!hasMoreTx || loadingMore || !db) return;
+  loadingMore = true;
+  const loader = document.createElement('div');
+  loader.className = 'load-more-s';
+  loader.innerHTML = '<div class="spin small"></div>';
+  $('tx-list')?.appendChild(loader);
+
+  try {
+    const { data, error } = await db.from('transactions').select('*')
+      .eq('user_id', UID).order('date', { ascending: false })
+      .range(histOffset, histOffset + 19);
+    
+    if (error) throw error;
+    const items = normAll(data);
+    if (items.length > 0) {
+      txList = [...txList, ...items];
+      histOffset += items.length;
+      hasMoreTx = items.length === 20;
+      renderHistory();
+    } else {
+      hasMoreTx = false;
+    }
+  } catch (e) {
+    console.error('[loadMore]', e);
+  } finally {
+    loadingMore = false;
+    loader.remove();
+  }
+}
+
+function initHistScroll() {
+  const v = $('view-hist');
+  if (!v || v.dataset.scrollInited) return;
+  v.dataset.scrollInited = '1';
+  v.onscroll = () => {
+    if (v.scrollTop + v.clientHeight >= v.scrollHeight - 100) {
+      loadMore();
+    }
+  };
 }
 
 // ─── RENDER ALL ─────────────────────────────────────────
