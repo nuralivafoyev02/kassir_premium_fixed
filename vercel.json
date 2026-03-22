@@ -6,7 +6,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/*.js": {
-      "runtime": "nodejs20.x"
+      "runtime": "nodejs24.x"
     }
   },
   "rewrites": [
@@ -18,8 +18,5 @@
       "source": "/(.*)",
       "destination": "/"
     }
-  ],
-  "scripts": {
-    "build": "vite build"
-  }
+  ]
 }
