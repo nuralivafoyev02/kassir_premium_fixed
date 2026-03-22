@@ -129,7 +129,14 @@
   "privacy_text": "Kassa ilovasi foydalanuvchilarning shaxsiy ma'lumotlarini himoya qiladi.\\n\\n1. Biz faqat ilovaning ishlashi uchun zarur bo'lgan ma'lumotlarni yig'amiz (Telegram ID, tranzaksiya ma'lumotlari).\\n2. Sizning ma'lumotlaringiz shifrlangan holda saqlanadi va uchinchi shaxslarga berilmaydi.\\n3. Siz istalgan vaqtda barcha ma'lumotlaringizni o'chirishingiz mumkin.\\n4. Biz cookie yoki kuzatuv texnologiyalaridan foydalanmaymiz.\\n5. Ma'lumotlar Supabase serverlarida xavfsiz saqlanadi.\\n\\nSavollar bo'lsa, @uyqur_nurali ga murojaat qiling.",
   "terms_title": "Foydalanish Shartlari",
   "terms_text": "Kassa — bu shaxsiy moliyaviy boshqaruv ilovasi.\\n\\n1. Ilova faqat shaxsiy foydalanish uchun mo'ljallangan.\\n2. Foydalanuvchi o'z ma'lumotlarining to'g'riligiga javobgardir.\\n3. Biz ilovaning uzluksiz ishlashini kafolatlamaymiz, lekin eng yaxshi tajribani taqdim etishga harakat qilamiz.\\n4. Ilova bepul, lekin kelajakda premium xususiyatlar qo'shilishi mumkin.\\n5. Biz istalgan vaqtda shartlarni o'zgartirishimiz mumkin.\\n\\nSavollar bo'lsa, @uyqur_nurali ga murojaat qiling.",
-  "err_profile_name_required": "Profil nomini kiriting",
-  "err_profile_save": "Profilni saqlashda xatolik",
-  "profile_saved": "Profil saqlandi ✅"
+  "profile_saved": "Profil saqlandi ✅",
+  "err_profile_name_required": "Ism kiriting",
+  "err_profile_save": "Profilni saqlab bo'lmadi",
+  "profile_photo_upload": "Rasm yuklash",
+  "profile_photo_change": "Rasmni yangilash",
+  "profile_photo_remove": "O'chirish",
+  "profile_photo_removed": "Saqlangach profil rasmi o'chiriladi",
+  "profile_photo_hint": "Rasm bosh sahifa va sozlamalarda ko'rinadi",
+  "profile_photo_empty": "Profil uchun rasm tanlang",
+  "err_profile_photo_process": "Rasmni tayyorlab bo'lmadi"
 }

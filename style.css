@@ -101,19 +101,50 @@ body {
     gap: 10px;
 }
 
+.header-user {
+    min-width: 0;
+}
+
 .header-logo {
-    font-size: 28px;
+    width: 46px;
+    height: 46px;
+    min-width: 46px;
+    border-radius: 50%;
+    background: rgba(139, 92, 246, 0.14);
+    border: 1px solid rgba(139, 92, 246, 0.28);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: 18px;
     line-height: 1;
+    color: var(--text);
+}
+
+.header-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.header-logo .stg-avatar-initials {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
 }
 
 .header-title {
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 900;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.3px;
     background: linear-gradient(135deg, #fff 0%, #a78bfa 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
 }
 
 .header-sub {
@@ -1914,6 +1945,38 @@ body.light .sh-close:hover {
 
 .stg-avatar.lg .stg-avatar-initials {
     font-size: 30px;
+}
+
+.profile-photo-actions {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.profile-photo-btn {
+    min-width: 140px;
+}
+
+.profile-photo-btn.danger {
+    border-color: rgba(239, 68, 68, 0.28);
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+}
+
+.profile-photo-btn.is-disabled,
+.profile-photo-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.profile-photo-note {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted);
+    text-align: center;
+    max-width: 280px;
 }
 
 .stg-name {

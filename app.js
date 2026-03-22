@@ -111,17 +111,25 @@ let loadingMore = false;
 let txSourceColumnSupported = null;
 let currentReceipt = { src: '', name: '' };
 let receiptBlobUrl = null;
+let userAvatarColumnSupported = null;
 
 const TX_FETCH_BATCH = 500;
 const RECEIPT_MAX_EDGE = 1480;
 const RECEIPT_PREVIEW_QUALITY = 0.68;
 const RECEIPT_UPLOAD_QUALITY = 0.78;
+const AVATAR_MAX_EDGE = 720;
+const AVATAR_QUALITY = 0.82;
 
 const profileState = {
   fullName: store.get('display_name') || '',
   username: tg?.initDataUnsafe?.user?.username || '',
   phone: '',
-  photoUrl: tg?.initDataUnsafe?.user?.photo_url || ''
+  photoUrl: store.get('profile_avatar_url') || ''
+};
+
+const profileEditState = {
+  photoUrl: '',
+  removeAvatar: false
 };
 
 // ─── HELPERS ────────────────────────────────────────────
@@ -434,18 +442,164 @@ function getInitials(name) {
   return initials || 'U';
 }
 
-function setAvatar(elId) {
+function getHeaderSubText() {
+  if (profileState.username) return `@${profileState.username}`;
+  if (profileState.phone) return profileState.phone;
+  return currentLang === 'ru' ? 'Пользователь Kassa' : currentLang === 'en' ? 'Kassa user' : 'Kassa foydalanuvchisi';
+}
+
+function getCurrentProfilePhotoUrl() {
+  return String(profileState.photoUrl || '').trim();
+}
+
+function getProfileEditPhotoUrl() {
+  if (profileEditState.removeAvatar) return '';
+  return String(profileEditState.photoUrl || getCurrentProfilePhotoUrl() || '').trim();
+}
+
+function resetProfileEditState() {
+  profileEditState.photoUrl = getCurrentProfilePhotoUrl();
+  profileEditState.removeAvatar = false;
+}
+
+function setProfileAvatarCache(url) {
+  const clean = String(url || '').trim();
+  profileState.photoUrl = clean;
+  if (clean) store.set('profile_avatar_url', clean);
+  else store.del('profile_avatar_url');
+}
+
+function setAvatar(elId, options = {}) {
   const el = $(elId);
   if (!el) return;
-  const name = getDisplayName();
-  const photoUrl = profileState.photoUrl || '';
+  const name = options.name || getDisplayName();
+  const photoUrl = String(options.photoUrl ?? getCurrentProfilePhotoUrl() ?? '').trim();
   if (photoUrl) {
-    el.innerHTML = `<img src="${photoUrl}" alt="${name}">`;
+    el.innerHTML = `<img src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}">`;
     el.classList.add('has-photo');
     return;
   }
   el.classList.remove('has-photo');
-  el.innerHTML = `<span class="stg-avatar-initials">${getInitials(name)}</span>`;
+  el.innerHTML = `<span class="stg-avatar-initials">${escapeHtml(getInitials(name))}</span>`;
+}
+
+function renderProfileEditorUI() {
+  const noteEl = $('profile-photo-note');
+  const removeBtn = $('profile-photo-remove-btn');
+  const pickBtn = $('profile-photo-pick-btn');
+  const hasPhoto = !!getProfileEditPhotoUrl();
+  setAvatar('stg-avatar-edit', { photoUrl: getProfileEditPhotoUrl() });
+
+  if (pickBtn) pickBtn.textContent = (T[hasPhoto ? 'profile_photo_change' : 'profile_photo_upload']) || (hasPhoto ? (currentLang === 'ru' ? 'Изменить фото' : currentLang === 'en' ? 'Change photo' : 'Rasmni yangilash') : (currentLang === 'ru' ? 'Загрузить фото' : currentLang === 'en' ? 'Upload photo' : 'Rasm yuklash'));
+  if (removeBtn) {
+    removeBtn.disabled = !hasPhoto;
+    removeBtn.classList.toggle('is-disabled', !hasPhoto);
+  }
+  if (noteEl) {
+    if (profileEditState.removeAvatar) noteEl.textContent = (T.profile_photo_removed) || (currentLang === 'ru' ? 'Фото профиля будет удалено после сохранения' : currentLang === 'en' ? 'Profile photo will be removed after saving' : "Saqlangach profil rasmi o'chiriladi");
+    else if (hasPhoto) noteEl.textContent = (T.profile_photo_hint) || (currentLang === 'ru' ? 'Фото появится на главной странице и в настройках' : currentLang === 'en' ? 'The photo will appear on the dashboard and in settings' : "Rasm bosh sahifa va sozlamalarda ko'rinadi");
+    else noteEl.textContent = (T.profile_photo_empty) || (currentLang === 'ru' ? 'Выберите фото для профиля' : currentLang === 'en' ? 'Choose a profile photo' : 'Profil uchun rasm tanlang');
+  }
+}
+
+async function compressAvatarToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        const minEdge = Math.min(img.width, img.height);
+        const sx = Math.max(0, Math.round((img.width - minEdge) / 2));
+        const sy = Math.max(0, Math.round((img.height - minEdge) / 2));
+        const size = Math.min(AVATAR_MAX_EDGE, Math.max(320, minEdge));
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, sx, sy, minEdge, minEdge, 0, 0, size, size);
+        const dataUrl = canvas.toDataURL('image/jpeg', AVATAR_QUALITY);
+        URL.revokeObjectURL(objectUrl);
+        resolve(dataUrl);
+      } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        reject(error);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Avatar image load failed'));
+    };
+    img.src = objectUrl;
+  });
+}
+
+function pickProfilePhoto() {
+  $('profile-photo-input')?.click();
+}
+
+async function handleProfilePhotoInput(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  try {
+    const dataUrl = await compressAvatarToDataUrl(file);
+    profileEditState.photoUrl = dataUrl;
+    profileEditState.removeAvatar = false;
+    renderProfileEditorUI();
+  } catch (error) {
+    console.error('[profile-photo]', error);
+    showErr(((T.err_profile_photo_process) || (currentLang === 'ru' ? 'Не удалось обработать фото' : currentLang === 'en' ? 'Could not process photo' : "Rasmni tayyorlab bo'lmadi")) + (error?.message ? ': ' + error.message : ''));
+  } finally {
+    if (event?.target) event.target.value = '';
+  }
+}
+
+function removeProfilePhoto() {
+  if (!getProfileEditPhotoUrl()) return;
+  profileEditState.photoUrl = '';
+  profileEditState.removeAvatar = true;
+  renderProfileEditorUI();
+}
+
+async function selectUserRow(extraFields = []) {
+  const baseFields = ['user_id', 'full_name', 'phone_number', ...extraFields];
+  const fields = Array.from(new Set([...(userAvatarColumnSupported === false ? [] : ['avatar_url']), ...baseFields])).join(', ');
+  let result = await db.from('users').select(fields).eq('user_id', UID).maybeSingle();
+  if (result.error && userAvatarColumnSupported !== false && /avatar_url/i.test(result.error.message || '')) {
+    userAvatarColumnSupported = false;
+    const fallbackFields = Array.from(new Set(baseFields)).join(', ');
+    result = await db.from('users').select(fallbackFields).eq('user_id', UID).maybeSingle();
+  } else if (!result.error && fields.includes('avatar_url')) {
+    userAvatarColumnSupported = true;
+  }
+  return result;
+}
+
+async function updateUserRow(values) {
+  let payload = { ...values };
+  if (userAvatarColumnSupported === false) delete payload.avatar_url;
+  let result = await db.from('users').update(payload).eq('user_id', UID);
+  if (result.error && 'avatar_url' in payload && /avatar_url/i.test(result.error.message || '')) {
+    userAvatarColumnSupported = false;
+    const { avatar_url, ...fallback } = payload;
+    result = await db.from('users').update(fallback).eq('user_id', UID);
+  } else if (!result.error && 'avatar_url' in payload) {
+    userAvatarColumnSupported = true;
+  }
+  return result;
+}
+
+async function insertUserRow(values) {
+  let payload = { ...values };
+  if (userAvatarColumnSupported === false) delete payload.avatar_url;
+  let result = await db.from('users').insert(payload);
+  if (result.error && 'avatar_url' in payload && /avatar_url/i.test(result.error.message || '')) {
+    userAvatarColumnSupported = false;
+    const { avatar_url, ...fallback } = payload;
+    result = await db.from('users').insert(fallback);
+  } else if (!result.error && 'avatar_url' in payload) {
+    userAvatarColumnSupported = true;
+  }
+  return result;
 }
 
 function renderProfileUI() {
@@ -453,11 +607,19 @@ function renderProfileUI() {
   const nameEl = $('stg-user-name');
   const subEl = $('stg-sub-info');
   const inputEl = $('stg-name-in');
+  const dashNameEl = $('dash-user-name');
+  const dashSubEl = $('dash-user-sub');
+
   if (nameEl) nameEl.textContent = displayName;
-  if (subEl) subEl.textContent = getProfileMeta() || 'Telegram foydalanuvchisi';
+  if (subEl) subEl.textContent = getProfileMeta() || (currentLang === 'ru' ? 'Пользователь Telegram' : currentLang === 'en' ? 'Telegram user' : 'Telegram foydalanuvchisi');
   if (inputEl && !document.activeElement?.isSameNode(inputEl)) inputEl.value = displayName;
+  if (dashNameEl) dashNameEl.textContent = displayName;
+  if (dashSubEl) dashSubEl.textContent = getHeaderSubText();
+
   setAvatar('stg-avatar');
-  setAvatar('stg-avatar-edit');
+  setAvatar('stg-avatar-edit', { photoUrl: getProfileEditPhotoUrl() });
+  setAvatar('dash-avatar');
+  renderProfileEditorUI();
 }
 
 function addMsg(text, isUser = false) {
@@ -617,14 +779,8 @@ async function ensureUser() {
   const tgUser = getTgUser();
   const tgName = [tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ').trim() || `User ${UID}`;
   profileState.username = tgUser?.username || profileState.username || '';
-  profileState.photoUrl = tgUser?.photo_url || profileState.photoUrl || '';
 
-  const { data: existing, error: ue } = await db
-    .from('users')
-    .select('user_id, full_name, phone_number')
-    .eq('user_id', UID)
-    .maybeSingle();
-
+  const { data: existing, error: ue } = await selectUserRow();
   if (ue) throw ue;
 
   if (!existing) {
@@ -632,33 +788,34 @@ async function ensureUser() {
       user_id: UID,
       full_name: tgName,
       phone_number: null,
+      avatar_url: getCurrentProfilePhotoUrl() || null
     };
-    const { error: ie } = await db.from('users').insert(row);
+    const { error: ie } = await insertUserRow(row);
     if (ie) throw ie;
     profileState.fullName = row.full_name;
     profileState.phone = row.phone_number || '';
+    setProfileAvatarCache(row.avatar_url || '');
     store.set('display_name', profileState.fullName);
+    resetProfileEditState();
     renderProfileUI();
     return;
   }
 
   profileState.fullName = normalizeName(existing.full_name) || tgName;
   profileState.phone = existing.phone_number || '';
+  setProfileAvatarCache(existing.avatar_url || '');
   store.set('display_name', profileState.fullName);
 
   if (!normalizeName(existing.full_name)) {
-    db.from('users').update({ full_name: tgName }).eq('user_id', UID).then(() => { }).catch(() => { });
+    updateUserRow({ full_name: tgName }).then(() => { }).catch(() => { });
   }
 
+  resetProfileEditState();
   renderProfileUI();
 }
 
 async function loadData() {
-  const { data: u, error: ue } = await db
-    .from('users')
-    .select('exchange_rate, full_name, phone_number')
-    .eq('user_id', UID)
-    .maybeSingle();
+  const { data: u, error: ue } = await selectUserRow(['exchange_rate']);
   if (ue) throw ue;
 
   if (u?.exchange_rate) {
@@ -668,7 +825,9 @@ async function loadData() {
   if (u) {
     profileState.fullName = normalizeName(u.full_name) || profileState.fullName;
     profileState.phone = u.phone_number || profileState.phone || '';
+    setProfileAvatarCache(u.avatar_url || '');
     if (profileState.fullName) store.set('display_name', profileState.fullName);
+    resetProfileEditState();
     renderProfileUI();
   }
 
@@ -1812,6 +1971,8 @@ function openStgSub(id) {
   if (id === 'stg-sub-profile') {
     const nameIn = $('stg-name-in');
     if (nameIn) nameIn.value = getDisplayName();
+    resetProfileEditState();
+    renderProfileEditorUI();
     renderProfileUI();
   }
   if (id === 'stg-sub-rate') {
@@ -1839,30 +2000,42 @@ async function saveProfile() {
   const raw = $('stg-name-in')?.value || '';
   const name = normalizeName(raw);
   if (!name) {
-    showErr(t('err_profile_name_required') || 'Ism kiritilmadi');
+    showErr((T.err_profile_name_required) || (currentLang === 'ru' ? 'Введите имя' : currentLang === 'en' ? 'Enter a name' : 'Ism kiriting'));
     return;
   }
 
-  const prevName = profileState.fullName;
+  const nextAvatarUrl = profileEditState.removeAvatar ? '' : (profileEditState.photoUrl || getCurrentProfilePhotoUrl() || '');
+  const prevState = {
+    fullName: profileState.fullName,
+    photoUrl: getCurrentProfilePhotoUrl()
+  };
+
   profileState.fullName = name;
+  setProfileAvatarCache(nextAvatarUrl);
   store.set('display_name', name);
   renderProfileUI();
 
   if (db) {
-    const { error } = await db.from('users').update({ full_name: name }).eq('user_id', UID);
+    const payload = { full_name: name, avatar_url: nextAvatarUrl || null };
+    const { error } = await updateUserRow(payload);
     if (error) {
-      profileState.fullName = prevName;
-      store.set('display_name', prevName || '');
+      profileState.fullName = prevState.fullName;
+      setProfileAvatarCache(prevState.photoUrl);
+      store.set('display_name', prevState.fullName || '');
+      resetProfileEditState();
       renderProfileUI();
-      showErr((t('err_profile_save') || 'Profilni saqlashda xatolik') + (error.message ? ': ' + error.message : ''));
+      showErr(((T.err_profile_save) || (currentLang === 'ru' ? 'Не удалось сохранить профиль' : currentLang === 'en' ? 'Could not save profile' : "Profilni saqlab bo'lmadi")) + (error.message ? ': ' + error.message : ''));
       return;
     }
   }
 
+  resetProfileEditState();
+  renderProfileUI();
   closeOv('stg-sub-profile');
   vib('light');
-  showErr(t('profile_saved') || 'Profil saqlandi ✅');
+  showErr((T.profile_saved) || (currentLang === 'ru' ? 'Профиль сохранён ✅' : currentLang === 'en' ? 'Profile saved ✅' : 'Profil saqlandi ✅'));
 }
+
 
 function initSettingsUI() {
   renderProfileUI();

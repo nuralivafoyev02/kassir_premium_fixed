@@ -64,10 +64,10 @@
         <!-- Header -->
         <div class="app-header">
           <div class="header-left">
-            <div class="header-logo">💰</div>
-            <div>
-              <div class="header-title" data-i18n="app_name">Kassa</div>
-              <div class="header-sub" data-i18n="app_sub">Moliyaviy boshqaruv</div>
+            <div class="header-logo" id="dash-avatar">💰</div>
+            <div class="header-user">
+              <div class="header-title" id="dash-user-name">Kassa</div>
+              <div class="header-sub" id="dash-user-sub" data-i18n="app_sub">Moliyaviy boshqaruv</div>
             </div>
           </div>
           <div class="header-actions">
@@ -217,8 +217,7 @@
                   <path
                     d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                 </svg><input type="file" accept="image/*" style="display:none" onchange="handleFile(event)"></label>
-              <button class="save-b" id="flow-save-btn" onclick="submitFlow()">💾 <span
-                  data-i18n="add_save">Saqlash</span></button>
+              <button class="save-b" id="flow-save-btn" onclick="submitFlow()">💾 <span data-i18n="add_save">Saqlash</span></button>
               <button class="cancel-x" onclick="cancelFlow()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   stroke-linecap="round" stroke-linejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18" />
@@ -540,6 +539,12 @@
             <circle cx="12" cy="7" r="4" />
           </svg>
         </div>
+        <input id="profile-photo-input" type="file" accept="image/*" hidden onchange="handleProfilePhotoInput(event)">
+        <div class="profile-photo-actions">
+          <button type="button" class="stg-action-btn profile-photo-btn" id="profile-photo-pick-btn" onclick="pickProfilePhoto()">Rasm yuklash</button>
+          <button type="button" class="stg-action-btn profile-photo-btn danger" id="profile-photo-remove-btn" onclick="removeProfilePhoto()">O'chirish</button>
+        </div>
+        <div class="profile-photo-note" id="profile-photo-note">Profil rasmi bosh sahifa va sozlamalarda ko'rinadi.</div>
       </div>
       <div class="fld"><label data-i18n="new_cat_name">Ism</label><input id="stg-name-in" type="text"
           placeholder="Ismingiz..."></div>
