@@ -88,7 +88,7 @@ body.light .balance-card {
 
 body.light .bc-amount,
 body.light .header-title {
-  background: linear-gradient(135deg, #0f172a 0%, var(--accent) 90%);
+  background: linear-gradient(135deg, var(--accent) 70px, var(--accent) 90%);
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -285,12 +285,12 @@ body.light .bc-amount,
 
 .header-title,
 .bc-amount {
-  background-image: linear-gradient(135deg, #ffffff 0%, var(--accent) 48%, var(--accent-2) 100%) !important;
+  background-image: linear-gradient(135deg, var(--accent) 10%, var(--accent) 70%, var(--accent-2) 95%) !important;
 }
 
 body.light .header-title,
 body.light .bc-amount {
-  background-image: linear-gradient(135deg, #0f172a 0%, var(--accent) 72%, var(--accent-2) 100%) !important;
+  background-image: linear-gradient(135deg, var(--accent) 20%, var(--accent) 72%, var(--accent-2) 100%) !important;
 }
 
 .stg-name,
