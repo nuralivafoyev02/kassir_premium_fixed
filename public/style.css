@@ -65,6 +65,7 @@ body {
     height: var(--app-height);
     margin: 0 auto;
     position: relative;
+    padding-top: calc(var(--safe-top) + var(--tg-header-offset) + var(--vv-top));
 }
 
 #views {
@@ -99,7 +100,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: calc(var(--app-top-reserve) + 12px) 16px 12px;
+    padding: 16px 12px;
     background: var(--surface);
     margin-top: calc(var(--app-top-reserve) + 24px);
     /* position: sticky; */
