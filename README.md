@@ -1,12 +1,35 @@
-# Kassa Premium — Vite + Vue migratsiya
+# Kassa Premium — Vite + Vue route refactor
 
-Bu loyiha original HTML/CSS/JS mini app'ni vizual o'zgartirmasdan Vite + Vue qobig'iga ko'chiradi.
+Bu versiyada ishlayotgan mini app vizual ko‘rinishi o‘zgartirilmasdan ichki tuzilma route va componentlarga ajratildi.
+
+## Nima o‘zgardi
+- UI / CSS / DOM id-class va inline eventlar saqlab qolindi.
+- Legacy biznes logika hanuz `public/app.js` ichida ishlaydi.
+- Katta `src/App.vue` bo‘laklarga ajratildi.
+- URL route qo‘llab-quvvatlashi qo‘shildi:
+  - `/` → Dashboard
+  - `/add` → Qo‘shish
+  - `/history` → Tarix
+- Legacy tab switch va browser route bir-biriga sinxron qilindi.
+
+## Yangi struktura
+- `src/App.vue` — root shell
+- `src/views/DashboardView.vue` — bosh sahifa
+- `src/views/AddView.vue` — tranzaksiya qo‘shish sahifasi
+- `src/views/HistoryView.vue` — tarix sahifasi
+- `src/components/core/*` — loader va PIN qatlamlari
+- `src/components/nav/BottomNav.vue` — pastki navigatsiya
+- `src/components/overlays/AppOverlays.vue` — modal/sheet/subpage’lar
+- `src/router/routes.js` — route map
+- `src/router/route-store.js` — lightweight route bridge
+- `src/lib/loadLegacyScripts.js` — legacy script loader
+- `public/style.css` — original CSS
+- `public/app.js` — original JS logika + route bridge patch
 
 ## Muhim tamoyil
-- UI, CSS, DOM id/class va inline eventlar saqlab qolingan.
-- Legacy logika `public/app.js` ichida qoldirilgan.
-- Vue faqat original DOM'ni render qiladi va legacy skriptlarni yuklaydi.
-- `/api/*` endpointlar Vercel serverless va local `node server.js` uchun saqlangan.
+- Dizayn qayta chizilmagan.
+- Legacy JS birdaniga rewrite qilinmagan.
+- Refactor xavfsiz bosqich bilan qilindi: avval markup bo‘lindi, keyin route bridge qo‘shildi.
 
 ## Ishga tushirish
 ```bash
@@ -14,7 +37,7 @@ npm install
 npm run dev
 ```
 
-yoki local bridge server bilan:
+Yoki:
 
 ```bash
 npm install
@@ -27,13 +50,9 @@ npm run build
 npm run preview
 ```
 
-## Vercel
-`vercel.json` Vite static build + `api/*.js` serverless route'larini tayyorlaydi.
-
-## Fayl tuzilmasi
-- `src/App.vue` — original HTML markup
-- `public/style.css` — original CSS
-- `public/app.js` — original JS logika
-- `public/lang/*` — i18n fayllari
-- `api/*` — serverless endpointlar
-- `server.js` — local dev uchun Vite middleware + API bridge
+## Keyingi bosqich uchun tayyor poydevor
+Endi quyidagilarni xavfsizroq joriy qilish mumkin:
+- kategoriya logikasini alohida service/store’ga ajratish
+- AI classification qatlamini qo‘shish
+- limit va notification modulini alohida bo‘limga ko‘chirish
+- add/history/settings oqimlarini bosqichma-bosqich legacy JS’dan Vue composable/store’ga o‘tkazish

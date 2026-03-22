@@ -724,6 +724,8 @@ function hideLoader() {
   initSettingsUI();
   hideLoader();
   initSwipe();
+  const initialTab = routeBridge()?.getCurrentTab?.() || getActiveTabFromDom();
+  goTab(initialTab, { fromRouter: true, replace: true });
 })();
 
 // ─── REALTIME ───────────────────────────────────────────
@@ -886,8 +888,41 @@ async function seedCats() {
 }
 
 // ─── NAVIGATION ─────────────────────────────────────────
-function goTab(tab) {
+function routeBridge() {
+  return window.__KASSA_ROUTER__ || null;
+}
+
+function getActiveTabFromDom() {
+  const id = document.querySelector('.view.active')?.id || '';
+  return id.startsWith('view-') ? id.slice(5) : 'dash';
+}
+
+function syncLegacyRoute(tab, opts = {}) {
+  if (opts.fromRouter) return;
   try {
+    routeBridge()?.navigateToTab?.(tab, {
+      replace: !!opts.replace,
+      silent: true,
+      source: 'legacy',
+    });
+  } catch (e) {
+    console.warn('[route-bridge] Failed to sync route', e);
+  }
+}
+
+function bindRouteBridge() {
+  if (window.__kassaRouteBridgeBound) return;
+  window.__kassaRouteBridgeBound = true;
+  window.addEventListener('kassa:route-request', (event) => {
+    const tab = event?.detail?.tab;
+    if (!tab || tab === getActiveTabFromDom()) return;
+    goTab(tab, { fromRouter: true, replace: event?.detail?.source === 'location' });
+  });
+}
+
+function goTab(tab, opts = {}) {
+  try {
+    syncLegacyRoute(tab, opts);
     vib('light');
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
@@ -906,6 +941,8 @@ function goTab(tab) {
     console.error('[goTab] Error:', e);
   }
 }
+
+bindRouteBridge();
 
 async function loadMore() {
   return;
