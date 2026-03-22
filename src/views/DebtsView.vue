@@ -1,6 +1,6 @@
 <template>
   <div id="view-debt" :class="['view', { active }]">
-    <div class="section-hero debts-hero debts-hero-v12">
+    <div class="section-hero debts-hero debts-hero-v13">
       <div>
         <div class="section-eyebrow" data-i18n="debts_eyebrow">Nazorat</div>
         <h2 data-i18n="debts_title">Qarzlar</h2>
@@ -51,26 +51,46 @@
       </div>
     </div>
 
-    <div class="route-filter-wrap">
-      <div class="filter-row route-filters">
-        <div class="fp on" id="debt-filter-all" onclick="setDebtFilter('all')">Hammasi</div>
-        <div class="fp" id="debt-filter-open" onclick="setDebtFilter('open')">Ochiq</div>
-        <div class="fp" id="debt-filter-overdue" onclick="setDebtFilter('overdue')">Kechikkan</div>
-        <div class="fp" id="debt-filter-paid" onclick="setDebtFilter('paid')">Yopilgan</div>
+    <div class="debt-toolkit">
+      <div class="debt-search-shell">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m20 20-3.5-3.5"></path>
+        </svg>
+        <input
+          id="debt-search"
+          type="search"
+          autocomplete="off"
+          placeholder="Ism, izoh yoki summa bo'yicha qidiring"
+          oninput="setDebtSearch(this.value)"
+        >
+        <button type="button" class="debt-search-clear" onclick="clearDebtSearch()">✕</button>
       </div>
-      <div class="filter-row route-filters muted-row">
-        <div class="fp on" id="debt-dir-all" onclick="setDebtDirectionFilter('all')">Hammasi</div>
-        <div class="fp" id="debt-dir-receivable" onclick="setDebtDirectionFilter('receivable')">Olinadi</div>
-        <div class="fp" id="debt-dir-payable" onclick="setDebtDirectionFilter('payable')">Beriladi</div>
+
+      <div class="debt-filter-shell">
+        <div class="filter-row route-filters">
+          <div class="fp on" id="debt-filter-all" onclick="setDebtFilter('all')">Hammasi</div>
+          <div class="fp" id="debt-filter-open" onclick="setDebtFilter('open')">Ochiq</div>
+          <div class="fp" id="debt-filter-overdue" onclick="setDebtFilter('overdue')">Kechikkan</div>
+          <div class="fp" id="debt-filter-paid" onclick="setDebtFilter('paid')">Yopilgan</div>
+        </div>
+        <div class="filter-row route-filters muted-row">
+          <div class="fp on" id="debt-dir-all" onclick="setDebtDirectionFilter('all')">Hammasi</div>
+          <div class="fp" id="debt-dir-receivable" onclick="setDebtDirectionFilter('receivable')">Olinadi</div>
+          <div class="fp" id="debt-dir-payable" onclick="setDebtDirectionFilter('payable')">Beriladi</div>
+        </div>
       </div>
     </div>
 
-    <div class="panel route-panel route-panel-tight">
-      <div class="panel-head-inline">
-        <div class="panel-ttl" data-i18n="debts_list_title">Qarzlar ro'yxati</div>
+    <div class="panel route-panel route-panel-tight debt-route-panel">
+      <div class="panel-head-inline debt-panel-head">
+        <div>
+          <div class="panel-ttl" data-i18n="debts_list_title">Qarzlar ro'yxati</div>
+          <div class="panel-head-sub">Bugungi va yaqinlashayotgan qarzlarni qulay boshqaring.</div>
+        </div>
         <div class="panel-head-meta" id="debt-list-meta">0 yozuv</div>
       </div>
-      <div id="debt-list" class="route-list"></div>
+      <div id="debt-list" class="route-list debt-list-v2"></div>
       <div id="debt-empty" class="empty-route-state">
         <div class="empty-route-ico">🤝</div>
         <h3 data-i18n="debts_empty">Hozircha qarz yozuvlari yo'q</h3>

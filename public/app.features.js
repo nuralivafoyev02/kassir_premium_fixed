@@ -12,6 +12,7 @@
   let planRealtimeBound = false;
   let debtFilterStatus = 'all';
   let debtFilterDirection = 'all';
+  let debtSearchQuery = '';
   let planFilterState = 'all';
 
   const debtStoreKey = () => `kassa_debts_${UID}`;
@@ -44,6 +45,76 @@
     if (Number.isNaN(d.getTime())) return '';
     const pad = v => String(v).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const pad2 = (value) => String(value).padStart(2, '0');
+  const setDateInputParts = (prefix, value) => {
+    const dateEl = $(`${prefix}-date`);
+    const timeEl = $(`${prefix}-time`);
+    if (!dateEl || !timeEl) return;
+    if (!value) {
+      dateEl.value = '';
+      timeEl.value = '';
+      return;
+    }
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return;
+    dateEl.value = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    timeEl.value = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  };
+  const combineDateTimeParts = (prefix) => {
+    const dateValue = String($(`${prefix}-date`)?.value || '');
+    const timeValue = String($(`${prefix}-time`)?.value || '');
+    if (!dateValue) return null;
+    const raw = `${dateValue}T${timeValue || '09:00'}`;
+    const stamp = new Date(raw);
+    return Number.isNaN(stamp.getTime()) ? null : stamp.toISOString();
+  };
+  const computeReminderByPreset = (dueAt, mode = 'same') => {
+    if (!dueAt) return null;
+    const due = new Date(dueAt);
+    if (Number.isNaN(due.getTime())) return null;
+    const remind = new Date(due);
+    if (mode === '30m') remind.setMinutes(remind.getMinutes() - 30);
+    else if (mode === '1h') remind.setHours(remind.getHours() - 1);
+    else if (mode === '1d') remind.setDate(remind.getDate() - 1);
+    return remind.toISOString();
+  };
+  const detectReminderPreset = (dueAt, remindAt) => {
+    if (!dueAt || !remindAt) return 'same';
+    const due = new Date(dueAt).getTime();
+    const remind = new Date(remindAt).getTime();
+    const diff = due - remind;
+    if (Math.abs(diff) < 60 * 1000) return 'same';
+    if (Math.abs(diff - 30 * 60 * 1000) < 60 * 1000) return '30m';
+    if (Math.abs(diff - 60 * 60 * 1000) < 60 * 1000) return '1h';
+    if (Math.abs(diff - 24 * 60 * 60 * 1000) < 60 * 1000) return '1d';
+    return 'custom';
+  };
+  const setDebtDirectionButtons = (mode = 'receivable') => {
+    const normalized = mode === 'payable' ? 'payable' : 'receivable';
+    const input = $('debt-direction');
+    if (input) input.value = normalized;
+    $('debt-dir-receivable-btn')?.classList.toggle('active', normalized === 'receivable');
+    $('debt-dir-payable-btn')?.classList.toggle('active', normalized === 'payable');
+  };
+  const updateDebtReminderPresetUI = (mode = 'same') => {
+    const wrap = $('debt-reminder-presets');
+    if (!wrap) return;
+    wrap.dataset.mode = mode;
+    wrap.querySelectorAll('.quick-chip').forEach((el) => el.classList.toggle('active', el.dataset.mode === mode));
+    const customWrap = $('debt-remind-custom-wrap');
+    if (customWrap) customWrap.style.display = mode === 'custom' ? 'grid' : 'none';
+    const hint = $('debt-remind-hint');
+    if (hint) {
+      const textMap = {
+        same: currentLang === 'ru' ? 'Бот напомнит точно в указанное время.' : currentLang === 'en' ? 'The bot will remind exactly at the due time.' : "Bot aynan belgilangan vaqtda eslatadi.",
+        '30m': currentLang === 'ru' ? 'Бот напомнит за 30 минут до срока.' : currentLang === 'en' ? 'The bot will remind 30 minutes before the due time.' : "Bot muddatdan 30 daqiqa oldin eslatadi.",
+        '1h': currentLang === 'ru' ? 'Бот напомнит за 1 час до срока.' : currentLang === 'en' ? 'The bot will remind 1 hour before the due time.' : "Bot muddatdan 1 soat oldin eslatadi.",
+        '1d': currentLang === 'ru' ? 'Бот напомнит за 1 день до срока.' : currentLang === 'en' ? 'The bot will remind 1 day before the due time.' : "Bot muddatdan 1 kun oldin eslatadi.",
+        custom: currentLang === 'ru' ? 'Укажите отдельную дату и время напоминания вручную.' : currentLang === 'en' ? 'Set a custom reminder date and time manually.' : "Eslatma uchun alohida sana va vaqtni qo'lda belgilang."
+      };
+      hint.textContent = textMap[mode] || textMap.same;
+    }
   };
   const monthKey = (value = Date.now()) => {
     const d = new Date(value);
@@ -370,6 +441,125 @@
     renderDebts();
   };
 
+  window.setDebtSearch = function setDebtSearch(value = '') {
+    debtSearchQuery = String(value || '').trim().toLowerCase();
+    const clearBtn = $('debt-search')?.parentElement?.querySelector('.debt-search-clear');
+    if (clearBtn) clearBtn.style.opacity = debtSearchQuery ? '1' : '.55';
+    renderDebts();
+  };
+
+  window.clearDebtSearch = function clearDebtSearch() {
+    debtSearchQuery = '';
+    if ($('debt-search')) $('debt-search').value = '';
+    renderDebts();
+  };
+
+  function debtMatchesSearch(item) {
+    if (!debtSearchQuery) return true;
+    const hay = [
+      item.person_name,
+      item.note,
+      item.direction,
+      item.status,
+      String(item.amount || ''),
+      fmt(item.amount || 0),
+      fmtMoney(item.amount || 0)
+    ].join(' ').toLowerCase();
+    return hay.includes(debtSearchQuery);
+  }
+
+  function debtReminderLabel(item) {
+    if (!item.remind_at) return currentLang === 'ru' ? 'Без напоминания' : currentLang === 'en' ? 'No reminder' : "Eslatma yo'q";
+    if (item.due_at && item.remind_at === item.due_at) return currentLang === 'ru' ? 'Точно в срок' : currentLang === 'en' ? 'At due time' : "Muddat vaqtida";
+    return fmtDateTimeShort(item.remind_at);
+  }
+
+  function debtRelativeLabel(item) {
+    const meta = debtDueMeta(item);
+    if (!meta.ts) return currentLang === 'ru' ? 'Срок не указан' : currentLang === 'en' ? 'No due date' : 'Muddat belgilanmagan';
+    if (item.status === 'paid') return currentLang === 'ru' ? 'Закрыт' : currentLang === 'en' ? 'Closed' : 'Yopilgan';
+    const diff = meta.ts - Date.now();
+    const abs = Math.abs(diff);
+    const mins = Math.round(abs / 60000);
+    const hours = Math.round(abs / 3600000);
+    const days = Math.round(abs / 86400000);
+    const prefix = diff < 0
+      ? (currentLang === 'ru' ? 'Kechikdi' : currentLang === 'en' ? 'Late by' : 'Kechikdi')
+      : (currentLang === 'ru' ? 'Qoldi' : currentLang === 'en' ? 'Left' : 'Qoldi');
+    if (mins < 60) return `${prefix} ${mins} ${currentLang === 'ru' ? 'мин' : currentLang === 'en' ? 'min' : 'daq'}`;
+    if (hours < 48) return `${prefix} ${hours} ${currentLang === 'ru' ? 'ч' : currentLang === 'en' ? 'h' : 'soat'}`;
+    return `${prefix} ${days} ${currentLang === 'ru' ? 'д' : currentLang === 'en' ? 'd' : 'kun'}`;
+  }
+
+  function debtSectionKey(item) {
+    const meta = debtDueMeta(item);
+    if (item.status === 'paid') return 'paid';
+    if (meta.isOverdue) return 'overdue';
+    if (meta.isToday) return 'today';
+    if (meta.isUpcoming) return 'upcoming';
+    return 'nodate';
+  }
+
+  function debtSectionLabel(key) {
+    const map = {
+      overdue: currentLang === 'ru' ? 'Мuddati o‘tganlar' : currentLang === 'en' ? 'Overdue' : "Muddati o'tganlar",
+      today: currentLang === 'ru' ? 'Сегодня' : currentLang === 'en' ? 'Today' : 'Bugun',
+      upcoming: currentLang === 'ru' ? 'Ближайшие' : currentLang === 'en' ? 'Upcoming' : 'Yaqinlashayotganlar',
+      nodate: currentLang === 'ru' ? 'Без срока' : currentLang === 'en' ? 'No due date' : 'Muddat belgilanmaganlar',
+      paid: currentLang === 'ru' ? 'Yopilganlar' : currentLang === 'en' ? 'Closed' : 'Yopilganlar'
+    };
+    return map[key] || key;
+  }
+
+  function renderDebtCard(item) {
+    const due = debtDueMeta(item);
+    const directionClass = item.direction === 'receivable' ? 'good' : 'warn';
+    const amountClass = item.direction === 'receivable' ? 'is-positive' : 'is-negative';
+    const statusClass = due.isOverdue ? 'danger' : (item.status === 'paid' ? 'good' : 'warn');
+    const noteText = item.note || (item.direction === 'receivable'
+      ? (currentLang === 'ru' ? 'Вам должны вернуть долг' : currentLang === 'en' ? 'They should pay you back' : "Sizga qaytarilishi kerak")
+      : (currentLang === 'ru' ? 'Вы должны вернуть долг' : currentLang === 'en' ? 'You should pay it back' : "Siz qaytarishingiz kerak"));
+    return `
+      <article class="debt-card ${due.isOverdue ? 'is-overdue' : ''} ${item.status === 'paid' ? 'is-paid' : ''}">
+        <div class="debt-card-top">
+          <div class="debt-card-person-wrap">
+            <div class="debt-card-person">${escapeHtml(item.person_name || '—')}</div>
+            <div class="debt-card-note">${escapeHtml(noteText)}</div>
+          </div>
+          <div class="debt-card-amount ${amountClass}">${fmtMoney(item.amount)}</div>
+        </div>
+        <div class="debt-card-meta-grid">
+          <div class="debt-glance-item">
+            <span>${currentLang === 'ru' ? 'Тип' : currentLang === 'en' ? 'Type' : 'Turi'}</span>
+            <strong>${escapeHtml(debtDirectionLabel(item.direction))}</strong>
+          </div>
+          <div class="debt-glance-item">
+            <span>${currentLang === 'ru' ? 'Срок' : currentLang === 'en' ? 'Due' : 'Muddat'}</span>
+            <strong>${escapeHtml(due.target ? fmtDateTimeShort(due.target) : '—')}</strong>
+          </div>
+          <div class="debt-glance-item">
+            <span>${currentLang === 'ru' ? 'Qolgan vaqt' : currentLang === 'en' ? 'Time left' : 'Qolgan vaqt'}</span>
+            <strong>${escapeHtml(debtRelativeLabel(item))}</strong>
+          </div>
+          <div class="debt-glance-item">
+            <span>${currentLang === 'ru' ? 'Напоминание' : currentLang === 'en' ? 'Reminder' : 'Eslatma'}</span>
+            <strong>${escapeHtml(debtReminderLabel(item))}</strong>
+          </div>
+        </div>
+        <div class="route-badges debt-card-badges">
+          <span class="route-badge ${directionClass}">${escapeHtml(debtDirectionLabel(item.direction))}</span>
+          <span class="route-badge ${statusClass}">${due.isOverdue ? "Muddati o'tgan" : escapeHtml(debtStatusLabel(item.status))}</span>
+        </div>
+        <div class="debt-card-actions">
+          ${item.status === 'open'
+            ? `<button class="route-action primary" onclick="markDebtPaid(${item.id})">✅ ${currentLang === 'ru' ? 'Qaytdi' : currentLang === 'en' ? 'Paid back' : 'Qaytdi'}</button>`
+            : `<button class="route-action" onclick="reopenDebt(${item.id})">↺ ${currentLang === 'ru' ? 'Qayta ochish' : currentLang === 'en' ? 'Reopen' : 'Qayta ochish'}</button>`}
+          <button class="route-action" onclick="openDebtForm(${item.id})">✏️ ${currentLang === 'ru' ? 'Изменить' : currentLang === 'en' ? 'Edit' : 'Tahrirlash'}</button>
+          <button class="route-action danger" onclick="deleteDebt(${item.id})">🗑 ${currentLang === 'ru' ? 'Удалить' : currentLang === 'en' ? 'Delete' : "O'chirish"}</button>
+        </div>
+      </article>`;
+  }
+
   function renderDebts() {
     const listEl = $('debt-list');
     const emptyEl = $('debt-empty');
@@ -401,6 +591,7 @@
     else if (debtFilterStatus === 'paid') items = items.filter(item => item.status === 'paid');
 
     if (debtFilterDirection !== 'all') items = items.filter(item => item.direction === debtFilterDirection);
+    items = items.filter(debtMatchesSearch);
 
     items = items.sort((a, b) => {
       const aMeta = debtDueMeta(a);
@@ -412,45 +603,76 @@
 
     if (metaEl) metaEl.textContent = `${items.length} yozuv`;
     emptyEl.style.display = items.length ? 'none' : 'grid';
-    listEl.innerHTML = items.map(item => {
-      const due = debtDueMeta(item);
-      const directionClass = item.direction === 'receivable' ? 'good' : 'warn';
-      const statusClass = due.isOverdue ? 'danger' : (item.status === 'paid' ? 'good' : 'warn');
-      const whenLabel = due.target ? fmtDateTimeShort(due.target) : 'Muddat belgilanmagan';
-      const titleMeta = item.note || debtDirectionLabel(item.direction);
-      return `
-        <div class="route-item debt-route-item ${due.isOverdue ? 'debt-route-item-overdue' : ''}">
-          <div class="route-item-top">
-            <div>
-              <div class="route-item-title">${escapeHtml(item.person_name || '—')}</div>
-              <div class="route-item-sub">${escapeHtml(titleMeta)}</div>
-            </div>
-            <div class="route-item-amount">${fmtMoney(item.amount)}</div>
-          </div>
-          <div class="route-badges">
-            <span class="route-badge ${directionClass}">${debtDirectionLabel(item.direction)}</span>
-            <span class="route-badge ${statusClass}">${due.isOverdue ? "Muddati o'tgan" : escapeHtml(debtStatusLabel(item.status))}</span>
-            <span class="route-badge">${escapeHtml(whenLabel)}</span>
-          </div>
-          <div class="route-actions">
-            ${item.status === 'open' ? `<button class="route-action primary" onclick="markDebtPaid(${item.id})">✅ ${currentLang === 'ru' ? 'Qaytdi' : currentLang === 'en' ? 'Paid back' : 'Qaytdi'}</button>` : ''}
-            <button class="route-action" onclick="openDebtForm(${item.id})">✏️ ${currentLang === 'ru' ? 'Изменить' : currentLang === 'en' ? 'Edit' : 'Tahrirlash'}</button>
-            <button class="route-action danger" onclick="deleteDebt(${item.id})">🗑 ${currentLang === 'ru' ? 'Удалить' : currentLang === 'en' ? 'Delete' : "O'chirish"}</button>
-          </div>
-        </div>`;
-    }).join('');
+
+    const order = ['overdue', 'today', 'upcoming', 'nodate', 'paid'];
+    const grouped = order.map(key => ({ key, items: items.filter(item => debtSectionKey(item) === key) })).filter(group => group.items.length);
+    listEl.innerHTML = grouped.map(group => `
+      <section class="debt-list-section">
+        <div class="debt-list-section-head">
+          <h3>${escapeHtml(debtSectionLabel(group.key))}</h3>
+          <span>${group.items.length}</span>
+        </div>
+        <div class="debt-card-stack">
+          ${group.items.map(renderDebtCard).join('')}
+        </div>
+      </section>
+    `).join('');
   }
+
+  window.setDebtDirectionMode = function setDebtDirectionMode(mode = 'receivable') {
+    setDebtDirectionButtons(mode);
+  };
+
+  window.applyDebtDuePreset = function applyDebtDuePreset(preset = 'today') {
+    const now = new Date();
+    const base = new Date();
+    if (preset === 'tomorrow') base.setDate(base.getDate() + 1);
+    if (preset === 'week') base.setDate(base.getDate() + 7);
+    const dueTime = $('debt-due-time')?.value || (preset === 'today' ? `${pad2(Math.max(now.getHours() + 1, 9))}:00` : '18:00');
+    const dateEl = $('debt-due-date');
+    const timeEl = $('debt-due-time');
+    if (dateEl) dateEl.value = `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(base.getDate())}`;
+    if (timeEl) timeEl.value = dueTime;
+    const mode = $('debt-reminder-presets')?.dataset.mode || 'same';
+    if (mode !== 'custom') {
+      const dueAt = combineDateTimeParts('debt-due');
+      setDateInputParts('debt-remind', computeReminderByPreset(dueAt, mode));
+    }
+  };
+
+  window.setDebtReminderPreset = function setDebtReminderPreset(mode = 'same') {
+    updateDebtReminderPresetUI(mode);
+    if (mode !== 'custom') {
+      const dueAt = combineDateTimeParts('debt-due');
+      setDateInputParts('debt-remind', computeReminderByPreset(dueAt, mode));
+    }
+  };
+
+  window.prefillDebtAmount = function prefillDebtAmount(value = 0) {
+    const current = Math.round(getCleanAmount($('debt-amount')?.value || ''));
+    const next = current > 0 ? current + Number(value || 0) : Number(value || 0);
+    if ($('debt-amount')) $('debt-amount').value = fmt(next);
+  };
 
   window.openDebtForm = function openDebtForm(id = null) {
     const debt = debtList.find(item => Number(item.id) === Number(id));
     $('debt-id').value = debt?.id || '';
-    $('debt-direction').value = debt?.direction || 'receivable';
+    setDebtDirectionButtons(debt?.direction || 'receivable');
     $('debt-person').value = debt?.person_name || '';
     $('debt-amount').value = debt?.amount ? fmt(debt.amount) : '';
-    $('debt-due-at').value = fmtForInput(debt?.due_at || '');
-    if ($('debt-remind-at')) $('debt-remind-at').value = fmtForInput(debt?.remind_at || debt?.due_at || '');
+    setDateInputParts('debt-due', debt?.due_at || '');
+    const preset = detectReminderPreset(debt?.due_at || '', debt?.remind_at || debt?.due_at || '');
+    updateDebtReminderPresetUI(preset);
+    setDateInputParts('debt-remind', debt?.remind_at || debt?.due_at || '');
     $('debt-note').value = debt?.note || '';
+    const titleEl = $('debt-form-title');
+    const badgeEl = $('debt-form-mode-badge');
+    const submitEl = $('debt-form-submit');
+    if (titleEl) titleEl.textContent = debt ? (currentLang === 'ru' ? 'Qarzni tahrirlash' : currentLang === 'en' ? 'Edit debt' : 'Qarzni tahrirlash') : (currentLang === 'ru' ? "Qarz qo'shish" : currentLang === 'en' ? 'Add debt' : "Qarz qo'shish");
+    if (badgeEl) badgeEl.textContent = debt ? (currentLang === 'ru' ? 'Tahrirlash' : currentLang === 'en' ? 'Editing' : 'Tahrirlash') : (currentLang === 'ru' ? 'Yangi' : currentLang === 'en' ? 'New' : 'Yangi');
+    if (submitEl) submitEl.textContent = debt ? (currentLang === 'ru' ? 'Saqlash' : currentLang === 'en' ? 'Save' : 'Saqlash') : (currentLang === 'ru' ? 'Yaratish' : currentLang === 'en' ? 'Create' : 'Yaratish');
     showOv('ov-debt-form');
+    if (!$('debt-due-date')?.value) window.applyDebtDuePreset('today');
     setTimeout(() => $('debt-person')?.focus(), 40);
   };
 
@@ -459,11 +681,14 @@
     const person_name = String($('debt-person').value || '').trim();
     const amount = Math.round(getCleanAmount($('debt-amount').value || ''));
     const direction = $('debt-direction').value === 'payable' ? 'payable' : 'receivable';
-    const due_at = $('debt-due-at').value ? new Date($('debt-due-at').value).toISOString() : null;
-    const remind_at = $('debt-remind-at')?.value ? new Date($('debt-remind-at').value).toISOString() : (due_at || null);
+    const due_at = combineDateTimeParts('debt-due');
+    const reminderMode = $('debt-reminder-presets')?.dataset.mode || 'same';
+    const remind_at = reminderMode === 'custom' ? combineDateTimeParts('debt-remind') : (computeReminderByPreset(due_at, reminderMode) || due_at || null);
     const note = String($('debt-note').value || '').trim();
     if (!person_name) return showErr(currentLang === 'ru' ? 'Kim bilan ekanini kiriting' : currentLang === 'en' ? 'Enter the person name' : 'Kim bilan ekanini kiriting');
     if (!amount) return showErr(tt('err_amount_required', 'Summani kiriting'));
+    if (!due_at) return showErr(currentLang === 'ru' ? 'Qaytarish sanasini tanlang' : currentLang === 'en' ? 'Choose a due date' : 'Qaytarish sanasini tanlang');
+    if (reminderMode === 'custom' && !remind_at) return showErr(currentLang === 'ru' ? 'Напоминание uchun sana va vaqtni kiriting' : currentLang === 'en' ? 'Enter the reminder date and time' : 'Eslatma sana va vaqtini kiriting');
 
     const payload = normalizeDebt({ id: id || Date.now(), user_id: UID, person_name, amount, direction, due_at, remind_at, note, status: 'open' });
     if (!db || debtTableAvailable === false) {
@@ -506,6 +731,18 @@
     if (!db || debtTableAvailable === false) { persistLocalDebts(); renderDebts(); return; }
     const { error } = await db.from('debts').update({ status: 'paid', paid_at: stamp }).eq('id', id).eq('user_id', UID);
     if (error) return showErr(error.message || 'Debt close failed');
+    renderDebts();
+  };
+
+
+  window.reopenDebt = async function reopenDebt(id) {
+    const debt = debtList.find(item => Number(item.id) === Number(id));
+    if (!debt) return;
+    debt.status = 'open';
+    debt.paid_at = null;
+    if (!db || debtTableAvailable === false) { persistLocalDebts(); renderDebts(); return; }
+    const { error } = await db.from('debts').update({ status: 'open', paid_at: null }).eq('id', id).eq('user_id', UID);
+    if (error) return showErr(error.message || 'Debt reopen failed');
     renderDebts();
   };
 

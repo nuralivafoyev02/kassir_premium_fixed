@@ -47,6 +47,17 @@ const store = {
   del: (k) => { try { localStorage.removeItem(k); } catch { } },
 };
 
+const THEME_CONFIG = window.KASSA_THEME_CONFIG || {
+  defaultName: 'gold',
+  themes: [
+    { id: 'gold', label: 'Sariq' },
+    { id: 'violet', label: 'Binafsha' },
+    { id: 'mono', label: 'Oq-qora' },
+  ]
+};
+const getAccentThemeIds = () => (THEME_CONFIG.themes || []).map(x => x.id);
+const getDefaultAccentTheme = () => THEME_CONFIG.defaultName || 'gold';
+
 // ─── USER ID ────────────────────────────────────────────
 function getUserId() {
   const tgId = Number(tg?.initDataUnsafe?.user?.id || 0);
@@ -686,6 +697,7 @@ function hideLoader() {
   startLoaderMessages();
   // Avval loader ko'rinsin, faqat hamma narsa tayyor bo'lgach yopiladi
 
+  applyAccentTheme(store.get('accent_theme') || getDefaultAccentTheme());
   if (store.get('theme') === 'light') document.body.classList.add('light');
 
   // Biometrics init
@@ -1794,6 +1806,7 @@ function updateSettingsUI() {
   // New settings UI
   updatePinUI();
   updateThemeIcon();
+  updateAccentThemeUI();
 }
 
 async function saveRate(v) {
@@ -1855,6 +1868,28 @@ function toggleTheme() {
   document.body.classList.toggle('light');
   store.set('theme', document.body.classList.contains('light') ? 'light' : 'dark');
   updateThemeIcon();
+  updateAccentThemeUI();
+}
+
+function applyAccentTheme(name = getDefaultAccentTheme()) {
+  const allowed = getAccentThemeIds();
+  const fallback = getDefaultAccentTheme();
+  const next = allowed.includes(name) ? name : fallback;
+  document.body.dataset.accentTheme = next;
+  store.set('accent_theme', next);
+}
+
+function setAccentTheme(name = 'gold') {
+  applyAccentTheme(name);
+  updateAccentThemeUI();
+  vib('light');
+}
+
+function updateAccentThemeUI() {
+  const current = document.body.dataset.accentTheme || getDefaultAccentTheme();
+  document.querySelectorAll('#theme-palette .theme-swatch').forEach((el) => {
+    el.classList.toggle('active', el.dataset.themeColor === current);
+  });
 }
 
 // ─── EXPORT / IMPORT ─────────────────────────────────────
