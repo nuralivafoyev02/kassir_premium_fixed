@@ -173,11 +173,19 @@
   "rate_saved": "Курс сохранён ✅",
   "err_db_save": "Ошибка сохранения в базе",
   "rate_saved_local": "Курс сохранён (локально) ✅",
-  "err_pdf_lib_missing": "PDF библиотека не загружена!",
+  "err_pdf_lib_missing": "PDF-модуль не загружен!",
   "pdf_report_header": "Касса — Финансовый отчёт",
   "import_success_reload": "Импорт выполнен! Перезагрузка...",
   "err_import_failed": "Ошибка импорта",
   "confirm_reset_data": "ВНИМАНИЕ! Все транзакции будут удалены. Продолжить?",
   "err_delete_failed": "Ошибка при удалении",
-  "reset_success": "Очищено ✅"
+  "reset_success": "Очищено ✅",
+  "pdf_modal_hint": "PDF-отчёт создаётся в Unicode-формате, поэтому кириллический текст отображается корректно.",
+  "pdf_preset_today": "Сегодня",
+  "pdf_preset_month": "Этот месяц",
+  "pdf_preset_last30": "Последние 30 дней",
+  "pdf_period_label": "Период",
+  "pdf_file_label": "Имя файла",
+  "pdf_generated_at": "Время создания",
+  "pdf_create_loading": "Подготовка..."
 }

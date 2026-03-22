@@ -173,11 +173,19 @@
   "rate_saved": "Rate saved ✅",
   "err_db_save": "Failed to save to database",
   "rate_saved_local": "Rate saved locally ✅",
-  "err_pdf_lib_missing": "PDF library is not loaded!",
+  "err_pdf_lib_missing": "The PDF module is not loaded!",
   "pdf_report_header": "Kassa — Financial Report",
   "import_success_reload": "Import successful! Reloading...",
   "err_import_failed": "Import error",
   "confirm_reset_data": "WARNING! All transactions will be deleted. Continue?",
   "err_delete_failed": "Delete failed",
-  "reset_success": "Cleared ✅"
+  "reset_success": "Cleared ✅",
+  "pdf_modal_hint": "The PDF report is generated in Unicode format, so Cyrillic text is displayed correctly.",
+  "pdf_preset_today": "Today",
+  "pdf_preset_month": "This month",
+  "pdf_preset_last30": "Last 30 days",
+  "pdf_period_label": "Period",
+  "pdf_file_label": "File name",
+  "pdf_generated_at": "Generated at",
+  "pdf_create_loading": "Preparing..."
 }

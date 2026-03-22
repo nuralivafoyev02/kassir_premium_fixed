@@ -1806,76 +1806,242 @@ function toggleTheme() {
 }
 
 // ─── EXPORT / IMPORT ─────────────────────────────────────
+function formatDateInputValue(date) {
+  const d = new Date(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatPdfDateTime(ms) {
+  return new Intl.DateTimeFormat(localeTag(), {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  }).format(new Date(ms));
+}
+
+function getExportRange() {
+  const sStr = $('ex-from')?.value;
+  const eStr = $('ex-to')?.value;
+  const start = sStr ? new Date(`${sStr}T00:00:00`).getTime() : 0;
+  const end = eStr ? new Date(`${eStr}T23:59:59.999`).getTime() : Date.now();
+  return { sStr, eStr, start, end };
+}
+
+function getExportFileName() {
+  const { sStr, eStr } = getExportRange();
+  const from = (sStr || formatDateInputValue(new Date())).replaceAll('-', '.');
+  const to = (eStr || formatDateInputValue(new Date())).replaceAll('-', '.');
+  return `Kassa_${from}_${to}.pdf`;
+}
+
+function setExportPreset(preset) {
+  const now = new Date();
+  let from = new Date(now);
+  let to = new Date(now);
+
+  if (preset === 'today') {
+    // today
+  } else if (preset === 'month') {
+    from = new Date(now.getFullYear(), now.getMonth(), 1);
+  } else if (preset === 'last30') {
+    from = new Date(now.getTime() - 29 * 86400000);
+  }
+
+  const fromEl = $('ex-from');
+  const toEl = $('ex-to');
+  if (fromEl) fromEl.value = formatDateInputValue(from);
+  if (toEl) toEl.value = formatDateInputValue(to);
+
+  document.querySelectorAll('[data-exp-preset]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.expPreset === preset);
+  });
+
+  updateExportPreview();
+}
+
 function openExport() {
   closeOv('ov-settings');
-  const now = new Date(), first = new Date(now.getFullYear(), now.getMonth(), 1);
-  $('ex-from').valueAsDate = first;
-  $('ex-to').valueAsDate = now;
-  updateExportPreview();
-  $('ex-from').onchange = updateExportPreview;
-  $('ex-to').onchange = updateExportPreview;
+  setExportPreset('month');
+  $('ex-from').onchange = () => {
+    document.querySelectorAll('[data-exp-preset]').forEach(btn => btn.classList.remove('active'));
+    updateExportPreview();
+  };
+  $('ex-to').onchange = () => {
+    document.querySelectorAll('[data-exp-preset]').forEach(btn => btn.classList.remove('active'));
+    updateExportPreview();
+  };
   showOv('ov-export');
 }
 
 function updateExportPreview() {
-  const s = new Date($('ex-from')?.value || 0).getTime();
-  const e = new Date($('ex-to')?.value || Date.now()).getTime() + 86400000;
-  const d = txList.filter(t => t.ms >= s && t.ms < e);
-  const cntEl = $('ex-cnt'), recEl = $('ex-rec');
-  if (cntEl) cntEl.textContent = String(d.length);
-  if (recEl) recEl.textContent = String(d.filter(t => t.receipt || t.receipt_url).length);
+  const { sStr, eStr, start, end } = getExportRange();
+  const data = txList.filter(t => t.ms >= start && t.ms <= end);
+  const inc = data.filter(t => t.type === 'income').reduce((sum, row) => sum + row.amount, 0);
+  const exp = data.filter(t => t.type === 'expense').reduce((sum, row) => sum + row.amount, 0);
+  const receipts = data.filter(t => t.receipt || t.receipt_url).length;
+
+  const cntEl = $('ex-cnt');
+  const recEl = $('ex-rec');
+  const incEl = $('ex-inc');
+  const expEl = $('ex-exp');
+  const balEl = $('ex-bal');
+  const fileEl = $('ex-file');
+  const periodEl = $('ex-period');
+
+  if (cntEl) cntEl.textContent = String(data.length);
+  if (recEl) recEl.textContent = String(receipts);
+  if (incEl) incEl.textContent = `+${fmt(inc)} ${tt('suffix_uzs', "so'm")}`;
+  if (expEl) expEl.textContent = `-${fmt(exp)} ${tt('suffix_uzs', "so'm")}`;
+  if (balEl) balEl.textContent = `${fmt(inc - exp)} ${tt('suffix_uzs', "so'm")}`;
+  if (fileEl) fileEl.textContent = getExportFileName();
+  if (periodEl) periodEl.textContent = sStr && eStr ? `${sStr.replaceAll('-', '.')} — ${eStr.replaceAll('-', '.')}` : '—';
 }
 
-async function makePDF() {
-  const { jsPDF } = window.jspdf || {};
-  if (!jsPDF) { showErr(tt('err_pdf_lib_missing', 'PDF kutubxonasi yuklanmagan!')); return; }
+function makePDF() {
+  const pdfMake = window.pdfMake;
+  const createBtn = $('ex-create-btn');
+  if (!pdfMake?.createPdf) {
+    showErr(tt('err_pdf_lib_missing', 'PDF moduli yuklanmagan!'));
+    return;
+  }
 
-  const sStr = $('ex-from')?.value, eStr = $('ex-to')?.value;
+  const { sStr, eStr, start, end } = getExportRange();
   if (!sStr || !eStr) return;
-  const s = new Date(sStr).getTime(), e = new Date(eStr).getTime() + 86400000;
-  const data = txList.filter(t => t.ms >= s && t.ms < e).sort((a, b) => a.ms - b.ms);
-  if (!data.length) { showErr(tt('no_data_error', "Hozircha ma'lumot yo'q")); return; }
 
-  const doc = new jsPDF(), pw = doc.internal.pageSize.width;
-  doc.setFillColor(10, 10, 15); doc.rect(0, 0, pw, 38, 'F');
-  doc.setTextColor(255, 255, 255); doc.setFontSize(20); doc.text(tt('pdf_report_header', 'Kassa — Moliyaviy Hisobot'), 14, 17);
-  doc.setFontSize(10); doc.setTextColor(160, 160, 180); doc.text(`${sStr} — ${eStr}`, 14, 28);
+  const data = txList
+    .filter(t => t.ms >= start && t.ms <= end)
+    .sort((a, b) => a.ms - b.ms);
 
+  if (!data.length) {
+    showErr(tt('no_data_error', "Hozircha ma'lumot yo'q"));
+    return;
+  }
+
+  if (createBtn) {
+    createBtn.disabled = true;
+    createBtn.textContent = tt('pdf_create_loading', 'Tayyorlanmoqda...');
+  }
+
+  const fileName = getExportFileName();
   const inc = data.filter(t => t.type === 'income').reduce((a, b) => a + b.amount, 0);
   const exp = data.filter(t => t.type === 'expense').reduce((a, b) => a + b.amount, 0);
-  let y = 48;
-  doc.setTextColor(0); doc.setFontSize(10);
-  doc.text(tt('income', 'Kirim') + ':', 14, y); doc.setTextColor(16, 185, 129); doc.setFont('helvetica', 'bold'); doc.text(`+${fmt(inc)} ${tt('suffix_uzs', "so'm")}`, 36, y);
-  doc.setTextColor(0); doc.setFont('helvetica', 'normal');
-  doc.text(tt('expense', 'Chiqim') + ':', 80, y); doc.setTextColor(239, 68, 68); doc.setFont('helvetica', 'bold'); doc.text(`-${fmt(exp)} ${tt('suffix_uzs', "so'm")}`, 103, y);
-  doc.setTextColor(0); doc.setFont('helvetica', 'normal');
-  doc.text(tt('balance_title', 'Qoldiq') + ':', 148, y); doc.setTextColor(124, 58, 237); doc.setFont('helvetica', 'bold'); doc.text(`${fmt(inc - exp)} ${tt('suffix_uzs', "so'm")}`, 168, y);
-  doc.setFont('helvetica', 'normal');
+  const receipts = data.filter(t => t.receipt || t.receipt_url).length;
+  const balance = inc - exp;
 
-  doc.autoTable({
-    startY: y + 12,
-    head: [[tt('date_start', 'Sana'), tt('edit_category', 'Kategoriya'), tt('edit_type', 'Tur'), tt('edit_amount', 'Summa')]],
-    body: data.map(t => [
-      new Date(t.ms).toLocaleDateString(), t.category,
-      t.type === 'income' ? tt('income', 'Kirim') : tt('expense', 'Chiqim'),
-      (t.type === 'income' ? '+' : '-') + fmt(t.amount),
-    ]),
-    theme: 'striped',
-    headStyles: { fillColor: [10, 10, 15] },
-    styles: { fontSize: 9 },
-    columnStyles: { 3: { halign: 'right', fontStyle: 'bold' } },
-    didParseCell(d) {
-      if (d.section === 'body' && d.column.index === 3) {
-        d.cell.styles.textColor = d.cell.raw.startsWith('+') ? [16, 185, 129] : [239, 68, 68];
-      }
+  const tableBody = [
+    [
+      { text: tt('date_start', 'Sana'), style: 'th' },
+      { text: tt('edit_category', 'Kategoriya'), style: 'th' },
+      { text: tt('edit_type', 'Tur'), style: 'th' },
+      { text: tt('edit_amount', 'Summa'), style: 'th', alignment: 'right' }
+    ],
+    ...data.map(row => {
+      const isIncome = row.type === 'income';
+      return [
+        { text: formatPdfDateTime(row.ms), style: 'td' },
+        { text: String(row.category || '—'), style: 'td' },
+        { text: isIncome ? tt('income', 'Kirim') : tt('expense', 'Chiqim'), style: 'td' },
+        {
+          text: `${isIncome ? '+' : '-'}${fmt(row.amount)} ${tt('suffix_uzs', "so'm")}`,
+          style: 'tdAmount',
+          color: isIncome ? '#10b981' : '#ef4444',
+          alignment: 'right'
+        }
+      ];
+    })
+  ];
+
+  const dd = {
+    info: {
+      title: fileName,
+      author: 'Kassa',
+      subject: tt('pdf_title', 'PDF Hisobot')
     },
-  });
+    pageSize: 'A4',
+    pageMargins: [24, 26, 24, 30],
+    defaultStyle: {
+      font: 'Roboto',
+      fontSize: 10,
+      color: '#111827'
+    },
+    content: [
+      {
+        stack: [
+          { text: tt('pdf_report_header', 'Kassa — Moliyaviy Hisobot'), style: 'title' },
+          { text: `${tt('pdf_period_label', 'Davr')}: ${sStr.replaceAll('-', '.')} — ${eStr.replaceAll('-', '.')}`, style: 'subtle' },
+          { text: `${tt('pdf_generated_at', 'Yaratilgan vaqt')}: ${formatPdfDateTime(Date.now())}`, style: 'subtle' }
+        ],
+        margin: [0, 0, 0, 14]
+      },
+      {
+        columns: [
+          { width: '*', stack: [{ text: tt('income', 'Kirim'), style: 'sumLabel' }, { text: `+${fmt(inc)} ${tt('suffix_uzs', "so'm")}`, style: 'sumIncome' }] },
+          { width: '*', stack: [{ text: tt('expense', 'Chiqim'), style: 'sumLabel' }, { text: `-${fmt(exp)} ${tt('suffix_uzs', "so'm")}`, style: 'sumExpense' }] },
+          { width: '*', stack: [{ text: tt('balance_title', 'Qoldiq'), style: 'sumLabel' }, { text: `${fmt(balance)} ${tt('suffix_uzs', "so'm")}`, style: 'sumBalance' }] }
+        ],
+        columnGap: 10,
+        margin: [0, 0, 0, 8]
+      },
+      {
+        columns: [
+          { width: '*', text: `${tt('pdf_ops', 'Operatsiyalar')}: ${data.length}`, style: 'metaLine' },
+          { width: '*', text: `${tt('pdf_receipts', 'Cheklar')}: ${receipts}`, style: 'metaLine', alignment: 'right' }
+        ],
+        margin: [0, 0, 0, 14]
+      },
+      {
+        table: {
+          headerRows: 1,
+          widths: [90, '*', 62, 92],
+          body: tableBody
+        },
+        layout: {
+          fillColor: (rowIndex) => rowIndex === 0 ? '#111827' : rowIndex % 2 === 0 ? '#f8fafc' : null,
+          hLineColor: () => '#e5e7eb',
+          vLineColor: () => '#e5e7eb',
+          paddingLeft: () => 8,
+          paddingRight: () => 8,
+          paddingTop: () => 6,
+          paddingBottom: () => 6
+        }
+      }
+    ]
+  };
 
-  doc.save(`Kassa_${sStr}_${eStr}.pdf`);
+  dd.styles = {
+    title: { fontSize: 18, bold: true, color: '#0f172a' },
+    subtle: { fontSize: 9, color: '#6b7280' },
+    sumLabel: { fontSize: 9, color: '#6b7280', margin: [0, 0, 0, 3] },
+    sumIncome: { fontSize: 13, bold: true, color: '#10b981' },
+    sumExpense: { fontSize: 13, bold: true, color: '#ef4444' },
+    sumBalance: { fontSize: 13, bold: true, color: '#7c3aed' },
+    metaLine: { fontSize: 9, color: '#475569' },
+    th: { color: '#ffffff', bold: true, fontSize: 9 },
+    td: { fontSize: 9, color: '#111827' },
+    tdAmount: { fontSize: 9, bold: true }
+  };
+
+  pdfMake.createPdf(dd).getBlob(blob => {
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 4000);
+  });
+  if (createBtn) {
+    createBtn.disabled = false;
+    createBtn.textContent = tt('pdf_create', 'Yaratish');
+  }
   closeOv('ov-export');
 }
 
 function doExport() {
+
   const blob = new Blob([JSON.stringify({ txList, cats, pin, bio: bioOn }, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `kassa_${isoNow().slice(0, 10)}.json` });
   document.body.appendChild(a); a.click(); document.body.removeChild(a);

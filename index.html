@@ -353,16 +353,46 @@
     </div>
   </div>
   <div class="ov center" id="ov-export" onclick="closeOv('ov-export',event)">
-    <div class="sheet c" onclick="event.stopPropagation()">
+    <div class="sheet c exp-modal" onclick="event.stopPropagation()">
       <div class="sh-ttl">📄 <span data-i18n="pdf_title">PDF Hisobot</span></div>
-      <div class="fld"><label data-i18n="date_start">Boshlanish</label><input id="ex-from" type="date"></div>
-      <div class="fld"><label data-i18n="date_end">Tugash</label><input id="ex-to" type="date"></div>
-      <div class="panel" style="margin:12px 0">
-        <div class="exp-s"><span data-i18n="pdf_ops">Operatsiyalar</span><span id="ex-cnt">0</span></div>
-        <div class="exp-s"><span data-i18n="pdf_receipts">Cheklar</span><span id="ex-rec">0</span></div>
+      <div class="exp-hint" data-i18n="pdf_modal_hint">PDF hisobot Unicode formatda yaratiladi va kirill matnlar to‘g‘ri chiqadi.</div>
+      <div class="exp-presets">
+        <button class="exp-chip" type="button" data-exp-preset="today" onclick="setExportPreset('today')" data-i18n="pdf_preset_today">Bugun</button>
+        <button class="exp-chip" type="button" data-exp-preset="month" onclick="setExportPreset('month')" data-i18n="pdf_preset_month">Shu oy</button>
+        <button class="exp-chip" type="button" data-exp-preset="last30" onclick="setExportPreset('last30')" data-i18n="pdf_preset_last30">So‘nggi 30 kun</button>
+      </div>
+      <div class="exp-grid">
+        <div class="fld"><label data-i18n="date_start">Boshlanish</label><input id="ex-from" type="date"></div>
+        <div class="fld"><label data-i18n="date_end">Tugash</label><input id="ex-to" type="date"></div>
+      </div>
+      <div class="exp-cards panel">
+        <div class="exp-card">
+          <span class="exp-label" data-i18n="pdf_ops">Operatsiyalar</span>
+          <strong id="ex-cnt">0</strong>
+        </div>
+        <div class="exp-card">
+          <span class="exp-label" data-i18n="pdf_receipts">Cheklar</span>
+          <strong id="ex-rec">0</strong>
+        </div>
+        <div class="exp-card income">
+          <span class="exp-label" data-i18n="income">Kirim</span>
+          <strong id="ex-inc">0</strong>
+        </div>
+        <div class="exp-card expense">
+          <span class="exp-label" data-i18n="expense">Chiqim</span>
+          <strong id="ex-exp">0</strong>
+        </div>
+        <div class="exp-card balance wide">
+          <span class="exp-label" data-i18n="balance_title">Qoldiq</span>
+          <strong id="ex-bal">0</strong>
+        </div>
+      </div>
+      <div class="exp-meta panel">
+        <div class="exp-s"><span data-i18n="pdf_period_label">Davr</span><span id="ex-period">—</span></div>
+        <div class="exp-s"><span data-i18n="pdf_file_label">Fayl nomi</span><span id="ex-file">Kassa.pdf</span></div>
       </div>
       <div class="mrow"><button class="bcl" onclick="closeOv('ov-export')" data-i18n="cancel">Bekor</button><button class="bpri"
-          onclick="makePDF()" data-i18n="pdf_create">Yaratish</button></div>
+          id="ex-create-btn" onclick="makePDF()" data-i18n="pdf_create">Yaratish</button></div>
     </div>
   </div>
   <div class="ov" id="ov-settings" onclick="closeOv('ov-settings',event)">
@@ -673,8 +703,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/pdfmake.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/vfs_fonts.min.js"></script>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="app.js"></script>
 </body>

@@ -1,7 +1,7 @@
 {
   "app_name": "Kassa",
   "app_sub": "Moliyaviy boshqaruv",
-  "nav_home": "Asosiy",
+  "nav_home": "Bosh",
   "nav_add": "Qo'shish",
   "nav_history": "Tarix",
   "balance_title": "Umumiy Qoldiq",
@@ -173,11 +173,19 @@
   "rate_saved": "Kurs saqlandi ✅",
   "err_db_save": "Bazaga saqlashda xatolik",
   "rate_saved_local": "Kurs saqlandi (lokal) ✅",
-  "err_pdf_lib_missing": "PDF kutubxonasi yuklanmagan!",
+  "err_pdf_lib_missing": "PDF moduli yuklanmagan!",
   "pdf_report_header": "Kassa — Moliyaviy Hisobot",
   "import_success_reload": "Import muvaffaqiyatli! Qayta yuklanmoqda...",
   "err_import_failed": "Import xatolik",
   "confirm_reset_data": "DIQQAT! Barcha tranzaksiyalar o'chadi. Davom etasizmi?",
   "err_delete_failed": "O'chirishda xatolik",
-  "reset_success": "Tozalandi ✅"
+  "reset_success": "Tozalandi ✅",
+  "pdf_modal_hint": "PDF hisobot Unicode formatda yaratiladi va kirill matnlar to‘g‘ri chiqadi.",
+  "pdf_preset_today": "Bugun",
+  "pdf_preset_month": "Shu oy",
+  "pdf_preset_last30": "So‘nggi 30 kun",
+  "pdf_period_label": "Davr",
+  "pdf_file_label": "Fayl nomi",
+  "pdf_generated_at": "Yaratilgan vaqt",
+  "pdf_create_loading": "Tayyorlanmoqda..."
 }
