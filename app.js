@@ -132,6 +132,13 @@ const profileEditState = {
   removeAvatar: false
 };
 
+let currentLang = store.get('lang') || 'uz';
+let T = {};
+
+function tt(key, fallback = '') {
+  return (T && T[key]) || fallback || key;
+}
+
 // ─── HELPERS ────────────────────────────────────────────
 const fmt = n => {
   const v = Number(n);
@@ -254,7 +261,7 @@ function updateFlowMeta() {
     typeEl.className = `flow-type-badge ${isIncome ? 'income' : 'expense'}`;
     typeEl.textContent = isIncome ? t('income') : t('expense');
   }
-  if (catEl) catEl.textContent = draft.category || (currentLang === 'ru' ? 'Категория не выбрана' : currentLang === 'en' ? 'Category not selected' : 'Kategoriya tanlanmagan');
+  if (catEl) catEl.textContent = draft.category || tt('flow_cat_unselected', 'Kategoriya tanlanmagan');
   if (saveBtn) {
     saveBtn.classList.toggle('income-mode', isIncome);
     saveBtn.classList.toggle('expense-mode', draft.type === 'expense');
@@ -307,7 +314,7 @@ function openReceiptViewer(src, tx = null) {
   setReceiptViewerState('loading');
   view.classList.add('on');
   img.onload = () => setReceiptViewerState('ready');
-  img.onerror = () => setReceiptViewerState('error', currentLang === 'ru' ? 'Чек не загрузился' : currentLang === 'en' ? 'Receipt failed to load' : 'Chek yuklanmadi');
+  img.onerror = () => setReceiptViewerState('error', tt('receipt_load_error', 'Chek yuklanmadi'));
   img.src = src;
 }
 
@@ -333,7 +340,7 @@ async function downloadReceipt() {
   } catch (err) {
     console.warn('[downloadReceipt]', err);
     openReceiptExternal();
-    showErr(currentLang === 'ru' ? 'Скачать не удалось, открыт оригинал' : currentLang === 'en' ? 'Download failed, original opened instead' : "Yuklab bo'lmadi, asl fayl ochildi");
+    showErr(tt('receipt_download_failed_opened_original', "Yuklab bo'lmadi, asl fayl ochildi"));
   }
 }
 
@@ -425,7 +432,7 @@ function normalizeName(v) {
 function getDisplayName() {
   const tgUser = getTgUser();
   const tgName = [tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ').trim();
-  return normalizeName(profileState.fullName) || tgName || `User ${UID}`;
+  return normalizeName(profileState.fullName) || tgName || `${tt('user_fallback', 'User')} ${UID}`;
 }
 
 function getProfileMeta() {
@@ -527,7 +534,7 @@ async function compressAvatarToDataUrl(file) {
     };
     img.onerror = () => {
       URL.revokeObjectURL(objectUrl);
-      reject(new Error('Avatar image load failed'));
+      reject(new Error(tt('err_profile_photo_load', 'Avatar rasmi yuklanmadi')));
     };
     img.src = objectUrl;
   });
@@ -611,7 +618,7 @@ function renderProfileUI() {
   const dashSubEl = $('dash-user-sub');
 
   if (nameEl) nameEl.textContent = displayName;
-  if (subEl) subEl.textContent = getProfileMeta() || (currentLang === 'ru' ? 'Пользователь Telegram' : currentLang === 'en' ? 'Telegram user' : 'Telegram foydalanuvchisi');
+  if (subEl) subEl.textContent = getProfileMeta() || tt('profile_meta_fallback', 'Telegram foydalanuvchisi');
   if (inputEl && !document.activeElement?.isSameNode(inputEl)) inputEl.value = displayName;
   if (dashNameEl) dashNameEl.textContent = displayName;
   if (dashSubEl) dashSubEl.textContent = getHeaderSubText();
@@ -637,7 +644,7 @@ let loaderInterval;
 function startLoaderMessages() {
   const msgEl = $('loader-msg');
   if (!msgEl) return;
-  const msgs = ['Yuklanyapti...', 'Sozlanyapti...', 'Deyarli tayyor...', 'Yana bir soniya...'];
+  const msgs = [tt('loading_1', 'Yuklanmoqda...'), tt('loading_2', 'Sozlanyapti...'), tt('loading_3', 'Deyarli tayyor...'), tt('loading_4', 'Yana bir soniya...')];
   let idx = 0;
   loaderInterval = setInterval(() => {
     msgEl.classList.add('fade');
@@ -686,10 +693,10 @@ function hideLoader() {
       initRealtime(); // Real-time ulanishni yoqish
     } catch (e) {
       console.error('[boot]', e);
-      showErr('Ma\'lumotlar yuklanmadi: ' + (e?.message || e));
+      showErr(tt('err_boot_data_load', "Ma'lumotlar yuklanmadi") + ': ' + (e?.message || e));
     }
   } else if (!UID) {
-    showErr("Telegram user_id topilmadi. URLga ?user_id=123 qo'shing.");
+    showErr(tt('err_missing_user_id', "Telegram user_id topilmadi. URLga ?user_id=123 qo'shing."));
   }
 
   // i18n tizimini yuklash
@@ -1278,7 +1285,7 @@ function toggleCur() {
   if (!btn) return;
   btn.textContent = inputCur;
   btn.className = 'cur-btn' + (inputCur === 'USD' ? ' usd' : '');
-  $('amt-in').placeholder = inputCur === 'USD' ? 'Necha dollar?' : 'Summani kiriting...';
+  $('amt-in').placeholder = inputCur === 'USD' ? tt('add_amount_placeholder_usd', 'Necha dollar?') : tt('add_amount_placeholder', 'Summani kiriting...');
   vib('light');
 }
 
@@ -1296,7 +1303,7 @@ async function handleFile(e) {
     updateFlowMeta();
   } catch (err) {
     console.warn('[handleFile]', err);
-    showErr(currentLang === 'ru' ? 'Чек не обработан' : currentLang === 'en' ? 'Receipt could not be processed' : "Chekni tayyorlab bo'lmadi");
+    showErr(tt('err_receipt_process', "Chekni tayyorlab bo'lmadi"));
   } finally {
     if (e.target) e.target.value = '';
   }
@@ -1317,7 +1324,7 @@ async function submitFlow() {
   // Bo'shliqli formatlangan qiymatdan sof raqam olish
   const raw = getCleanAmount($('amt-in')?.value || '');
   if (!raw || !draft.category) {
-    showErr('Summa kiritilmagan!');
+    showErr(tt('err_amount_required', 'Summa kiritilmagan!'));
     return;
   }
 
@@ -1340,8 +1347,8 @@ async function submitFlow() {
   txList.unshift(normTx({ ...newTx, id: tempId, receipt: draft.receipt }));
   renderAll();
 
-  const amtStr = inputCur === 'USD' ? `$${raw} → ${fmt(amount)} so'm` : `${fmt(amount)} so'm`;
-  addMsg(`✅ <b>Saqlandi:</b> ${amtStr}<br><small style="opacity:.6">${draft.category}${note}</small>`);
+  const amtStr = inputCur === 'USD' ? `$${raw} → ${fmt(amount)} ${tt('suffix_uzs', "so'm")}` : `${fmt(amount)} ${tt('suffix_uzs', "so'm")}`;
+  addMsg(`✅ <b>${escapeHtml(tt('tx_saved_label', 'Saqlandi'))}:</b> ${amtStr}<br><small style="opacity:.6">${escapeHtml(draft.category + note)}</small>`);
 
   $('amt-in').value = '';
   if (inputCur === 'USD') toggleCur();
@@ -1353,7 +1360,7 @@ async function submitFlow() {
     if (error) {
       txList = txList.filter(t => t.id !== tempId);
       renderAll();
-      showErr('Saqlashda xatolik: ' + error.message);
+      showErr(tt('err_save_failed', 'Saqlashda xatolik') + ': ' + error.message);
       return;
     }
     const saved = Array.isArray(data) ? data[0] : data;
@@ -1481,11 +1488,11 @@ async function saveEditCat() {
   closeOv('ov-editcat');
   if (db && cat.id) {
     const { error } = await db.from('categories').update({ name: n }).eq('id', cat.id).eq('user_id', UID);
-    if (error) showErr('Yangilashda xatolik');
+    if (error) showErr(tt('err_update_failed', 'Yangilashda xatolik'));
   }
 }
 async function ctxDel() {
-  if (!confirm("Bu kategoriyani o'chirasizmi?")) return;
+  if (!confirm(tt('confirm_delete_category', "Bu kategoriyani o'chirasizmi?"))) return;
   const cat = cats[selCatType]?.[selCatIdx];
   if (!cat) return;
   cats[selCatType].splice(selCatIdx, 1);
@@ -1505,20 +1512,20 @@ function openAction(id) {
   if (t.receipt || t.receipt_url) {
     const b = document.createElement('button');
     b.className = 'as-b green';
-    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Chekni ko'rish`;
+    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${escapeHtml(tt('action_view_receipt', "Chekni ko'rish"))}`;
     b.onclick = () => { openReceiptViewer(t.receipt_url || t.receipt, t); closeOv('ov-action'); };
     btns.appendChild(b);
   }
 
   const editB = document.createElement('button');
   editB.className = 'as-b blue';
-  editB.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Tahrirlash`;
+  editB.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>${escapeHtml(tt('action_edit', 'Tahrirlash'))}`;
   editB.onclick = () => { openEdit(); closeOv('ov-action'); };
   btns.appendChild(editB);
 
   const delB = document.createElement('button');
   delB.className = 'as-b red';
-  delB.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>O'chirish`;
+  delB.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>${escapeHtml(tt('action_delete', "O'chirish"))}`;
   delB.onclick = () => { closeOv('ov-action'); showOv('ov-delete'); };
   btns.appendChild(delB);
 
@@ -1550,7 +1557,7 @@ async function saveEdit() {
   if (db) {
     const { error } = await db.from('transactions').update({ category: cat, amount: amt, type: typ })
       .eq('id', selTxId).eq('user_id', UID);
-    if (error) showErr('Yangilashda xatolik');
+    if (error) showErr(tt('err_update_failed', 'Yangilashda xatolik'));
   }
 }
 
@@ -1634,7 +1641,7 @@ function checkPin() {
       store.set('pin', pin);
       hidePinScreen();
       updateSettingsUI();
-      showErr('PIN o\'rnatildi ✅');
+      showErr(tt('pin_set_success', "PIN o'rnatildi ✅"));
     } else {
       shake();
       setTimeout(() => showPin('setup_new'), 500);
@@ -1644,7 +1651,7 @@ function checkPin() {
 
 async function triggerBio() {
   if (!tg?.BiometricManager?.isBiometricAvailable) return;
-  tg.BiometricManager.authenticate({ reason: 'Kassa-ga xavfsiz kirish' }, (success, token) => {
+  tg.BiometricManager.authenticate({ reason: tt('biometric_reason_auth', 'Kassa-ga xavfsiz kirish') }, (success, token) => {
     if (success) {
       hidePinScreen();
     }
@@ -1671,7 +1678,7 @@ function setupPin() {
 }
 
 function removePin() {
-  if (!confirm('PIN kodni o\'chirasizmi?')) return;
+  if (!confirm(tt('confirm_remove_pin', "PIN kodni o'chirasizmi?"))) return;
   store.del('pin');
   pin = null;
   updateSettingsUI();
@@ -1681,7 +1688,7 @@ function toggleBio(ev) {
   ev?.stopPropagation?.();
   const bm = tg?.BiometricManager;
   if (!bm?.isBiometricAvailable) {
-    showErr('Biometrika qurilmangizda mavjud emas');
+    showErr(tt('err_biometric_unavailable', 'Biometrika qurilmangizda mavjud emas'));
     return;
   }
 
@@ -1693,13 +1700,13 @@ function toggleBio(ev) {
   const tokenLabel = 'kassa-token';
 
   const afterTokenUpdate = (updated) => {
-    if (!updated) showErr('Biometrika holati yangilanmadi. Qayta urinib ko‘ring.');
+    if (!updated) showErr(tt('err_biometric_update_failed', 'Biometrika holati yangilanmadi. Qayta urinib ko‘ring.'));
     else vib('light');
     updateSettingsUI();
   };
 
   if (!bm.isAccessRequested) {
-    bm.requestAccess({ reason: 'Xavfsizlik uchun biometrikadan foydalanish' }, (granted) => {
+    bm.requestAccess({ reason: tt('biometric_reason_enable', 'Xavfsizlik uchun biometrikadan foydalanish') }, (granted) => {
       if (!granted) return;
       bm.updateBiometricToken(tokenLabel, afterTokenUpdate);
     });
@@ -1716,7 +1723,7 @@ function updateSettingsUI() {
   // Legacy check for old IDs (kept for compatibility)
   const ps = $('pin-status'), rb = $('pin-rm-b'), ri = $('rate-in');
   const br = $('bio-row'), bt = $('bio-tgl');
-  if (ps) ps.textContent = pin ? 'Faol ✅' : 'O\'rnatilmagan';
+  if (ps) ps.textContent = pin ? tt('stg_pin_set', 'Faol ✅') : tt('stg_pin_not_set', "O'rnatilmagan");
   if (rb) rb.style.display = pin ? 'block' : 'none';
   if (ri) ri.value = rate ? fmt(rate).replace(/\s/g, ' ') : '';
   if (br) br.style.display = tg?.BiometricManager?.isBiometricAvailable ? 'flex' : 'none';
@@ -1757,13 +1764,13 @@ async function saveRate(v) {
         { onConflict: 'user_id' }
       );
       if (error) throw error;
-      showErr('Kurs saqlandi ✅');
+      showErr(tt('rate_saved', 'Kurs saqlandi ✅'));
     } catch (e) {
       console.error('[saveRate]', e);
-      showErr('Bazaga saqlashda xatolik: ' + (e.message || e));
+      showErr(tt('err_db_save', 'Bazaga saqlashda xatolik') + ': ' + (e.message || e));
     }
   } else {
-    showErr('Kurs saqlandi (Lokal) ✅');
+    showErr(tt('rate_saved_local', 'Kurs saqlandi (Lokal) ✅'));
   }
 }
 
@@ -1815,42 +1822,42 @@ function updateExportPreview() {
   const e = new Date($('ex-to')?.value || Date.now()).getTime() + 86400000;
   const d = txList.filter(t => t.ms >= s && t.ms < e);
   const cntEl = $('ex-cnt'), recEl = $('ex-rec');
-  if (cntEl) cntEl.textContent = d.length + ' ta';
-  if (recEl) recEl.textContent = d.filter(t => t.receipt || t.receipt_url).length + ' ta';
+  if (cntEl) cntEl.textContent = String(d.length);
+  if (recEl) recEl.textContent = String(d.filter(t => t.receipt || t.receipt_url).length);
 }
 
 async function makePDF() {
   const { jsPDF } = window.jspdf || {};
-  if (!jsPDF) { showErr('PDF kutubxonasi yuklanmagan!'); return; }
+  if (!jsPDF) { showErr(tt('err_pdf_lib_missing', 'PDF kutubxonasi yuklanmagan!')); return; }
 
   const sStr = $('ex-from')?.value, eStr = $('ex-to')?.value;
   if (!sStr || !eStr) return;
   const s = new Date(sStr).getTime(), e = new Date(eStr).getTime() + 86400000;
   const data = txList.filter(t => t.ms >= s && t.ms < e).sort((a, b) => a.ms - b.ms);
-  if (!data.length) { showErr("Hozircha ma'lumot yo'q"); return; }
+  if (!data.length) { showErr(tt('no_data_error', "Hozircha ma'lumot yo'q")); return; }
 
   const doc = new jsPDF(), pw = doc.internal.pageSize.width;
   doc.setFillColor(10, 10, 15); doc.rect(0, 0, pw, 38, 'F');
-  doc.setTextColor(255, 255, 255); doc.setFontSize(20); doc.text('Kassa — Moliyaviy Hisobot', 14, 17);
+  doc.setTextColor(255, 255, 255); doc.setFontSize(20); doc.text(tt('pdf_report_header', 'Kassa — Moliyaviy Hisobot'), 14, 17);
   doc.setFontSize(10); doc.setTextColor(160, 160, 180); doc.text(`${sStr} — ${eStr}`, 14, 28);
 
   const inc = data.filter(t => t.type === 'income').reduce((a, b) => a + b.amount, 0);
   const exp = data.filter(t => t.type === 'expense').reduce((a, b) => a + b.amount, 0);
   let y = 48;
   doc.setTextColor(0); doc.setFontSize(10);
-  doc.text('Kirim:', 14, y); doc.setTextColor(16, 185, 129); doc.setFont('helvetica', 'bold'); doc.text(`+${fmt(inc)} so'm`, 36, y);
+  doc.text(tt('income', 'Kirim') + ':', 14, y); doc.setTextColor(16, 185, 129); doc.setFont('helvetica', 'bold'); doc.text(`+${fmt(inc)} ${tt('suffix_uzs', "so'm")}`, 36, y);
   doc.setTextColor(0); doc.setFont('helvetica', 'normal');
-  doc.text('Chiqim:', 80, y); doc.setTextColor(239, 68, 68); doc.setFont('helvetica', 'bold'); doc.text(`-${fmt(exp)} so'm`, 103, y);
+  doc.text(tt('expense', 'Chiqim') + ':', 80, y); doc.setTextColor(239, 68, 68); doc.setFont('helvetica', 'bold'); doc.text(`-${fmt(exp)} ${tt('suffix_uzs', "so'm")}`, 103, y);
   doc.setTextColor(0); doc.setFont('helvetica', 'normal');
-  doc.text('Qoldiq:', 148, y); doc.setTextColor(124, 58, 237); doc.setFont('helvetica', 'bold'); doc.text(`${fmt(inc - exp)} so'm`, 168, y);
+  doc.text(tt('balance_title', 'Qoldiq') + ':', 148, y); doc.setTextColor(124, 58, 237); doc.setFont('helvetica', 'bold'); doc.text(`${fmt(inc - exp)} ${tt('suffix_uzs', "so'm")}`, 168, y);
   doc.setFont('helvetica', 'normal');
 
   doc.autoTable({
     startY: y + 12,
-    head: [['Sana', 'Kategoriya', 'Tur', 'Summa']],
+    head: [[tt('date_start', 'Sana'), tt('edit_category', 'Kategoriya'), tt('edit_type', 'Tur'), tt('edit_amount', 'Summa')]],
     body: data.map(t => [
       new Date(t.ms).toLocaleDateString(), t.category,
-      t.type === 'income' ? 'Kirim' : 'Chiqim',
+      t.type === 'income' ? tt('income', 'Kirim') : tt('expense', 'Chiqim'),
       (t.type === 'income' ? '+' : '-') + fmt(t.amount),
     ]),
     theme: 'striped',
@@ -1889,29 +1896,27 @@ async function doImport(e) {
         const { error } = await insertTransactions(rows, 'import');
         if (error) throw error;
       }
-      showErr('Muvaffaqiyatli import! Qayta yuklanmoqda...');
+      showErr(tt('import_success_reload', 'Muvaffaqiyatli import! Qayta yuklanmoqda...'));
       setTimeout(() => location.reload(), 1500);
-    } catch (err) { showErr('Import xatolik: ' + err.message); }
+    } catch (err) { showErr(tt('err_import_failed', 'Import xatolik') + ': ' + err.message); }
   };
   reader.readAsText(file);
   e.target.value = '';
 }
 
 function resetData() {
-  if (!confirm("DIQQAT! Barcha tranzaksiyalar o'chadi. Davom etasizmi?")) return;
+  if (!confirm(tt('confirm_reset_data', "DIQQAT! Barcha tranzaksiyalar o'chadi. Davom etasizmi?"))) return;
   txList = [];
   renderAll();
   renderHistory();
   closeOv('ov-settings');
   if (db) db.from('transactions').delete().eq('user_id', UID).then(({ error }) => {
-    if (error) showErr('O\'chirishda xatolik');
-    else showErr('Tozalandi ✅');
+    if (error) showErr(tt('err_delete_failed', "O'chirishda xatolik"));
+    else showErr(tt('reset_success', 'Tozalandi ✅'));
   });
 }
 
 // ─── I18N (INTERNATIONALIZATION) ─────────────────────────
-let currentLang = store.get('lang') || 'uz';
-let T = {};
 
 async function loadLang(lang) {
   try {
@@ -1931,6 +1936,7 @@ function t(key) {
   return T[key] || key;
 }
 
+
 function applyLang() {
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.dataset.i18n;
@@ -1944,11 +1950,24 @@ function applyLang() {
     const key = el.dataset.i18nTitle;
     if (T[key]) el.title = T[key];
   });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const key = el.dataset.i18nHtml;
+    if (T[key]) el.innerHTML = T[key];
+  });
+  document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+    const key = el.dataset.i18nAriaLabel;
+    if (T[key]) el.setAttribute('aria-label', T[key]);
+  });
+  document.querySelectorAll('[data-i18n-alt]').forEach(el => {
+    const key = el.dataset.i18nAlt;
+    if (T[key]) el.setAttribute('alt', T[key]);
+  });
   ['uz', 'ru', 'en'].forEach(l => {
     const check = $(`lang-check-${l}`);
     if (check) check.textContent = l === currentLang ? '✓' : '';
   });
   document.documentElement.lang = currentLang === 'ru' ? 'ru' : currentLang === 'en' ? 'en' : 'uz';
+  document.title = tt('app_name', 'Kassa');
   renderProfileUI();
 }
 
