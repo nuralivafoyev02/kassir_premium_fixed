@@ -62,7 +62,11 @@
 - Excel fayl `.xls` formatida Spreadsheet XML ko'rinishida yuboriladi; Excel va ko'p telefon office ilovalari buni ochadi.
 
 
-## Hotfix 1.0.5-1
-- Mini App limit yaratishda `duplicate key value violates unique constraint category_limits_user_id_category_type_key` xatoligi bartaraf etildi.
-- Legacy `category_limits` sxemasi (`category`, `type`, `name`, `category_name`) bilan moslik kuchaytirildi.
-- Bot orqali yaratilgan limit/rejalar Mini App plan bo'limida ko'rinishi uchun yuklash va saqlash fallbacklari kengaytirildi.
+## Hotfix: Plan / Qarz / Mini App sync
+- `normalizeTextForMatch` helper Mini App feature bundle ichiga qo'shildi. Shu bilan Reja va Qarz bo'limidagi runtime xatolik bartaraf etildi.
+- Reja statistikasini hisoblash, qidirish va limit progress endi bir xil normalize qoidasi bilan ishlaydi.
+- Mini App ichidan yangi reja yaratilganda, avval mavjud yozuv topilib **update** qilinadi; shuning uchun legacy `category_limits_user_id_category_type_key` unique constraint bilan to'qnashuv kamaytirildi.
+- Reja yozishda legacy sxema (`category`, `type`) va yangi sxema (`category_name`, `month_key`, `category_id`) birga qo'llab-quvvatlanadi.
+- Bot orqali yaratilgan reja yozuvlari Mini App reja ro'yxatida ko'rinishi uchun yuklash/dedupe oqimi mustahkamlandi.
+- Mini App'dagi kirim/chiqim saqlash oqimini to'xtatib qo'yayotgan reja statistikasi xatosi bartaraf etildi.
+- Bot tarafdagi reja saqlash logikasi ham legacy va yangi `category_limits` sxemalari orasida bir xil kalit bilan ishlaydigan qilindi.
