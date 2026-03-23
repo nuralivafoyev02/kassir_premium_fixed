@@ -134,6 +134,28 @@ function categoryLimitNameColumn() {
   return categoryLimitNameColumnSupported === 'name' ? 'name' : 'category_name';
 }
 
+function alternateCategoryLimitNameColumn(col) {
+  return col === 'name' ? 'category_name' : 'name';
+}
+
+async function runCategoryLimitQuery(executor) {
+  let nameCol = categoryLimitNameColumn();
+  let result = await executor(nameCol);
+
+  if (result?.error && isMissingColumnError(result.error, nameCol)) {
+    const alternate = alternateCategoryLimitNameColumn(nameCol);
+    categoryLimitNameColumnSupported = alternate === 'name' ? 'name' : null;
+    nameCol = alternate;
+    result = await executor(nameCol);
+  }
+
+  if (!result?.error) {
+    categoryLimitNameColumnSupported = nameCol === 'name' ? 'name' : null;
+  }
+
+  return { nameCol, result };
+}
+
 function normalizeCategoryLimitRow(row) {
   if (!row) return row;
   return { ...row, category_name: row.category_name || row.name || '' };
@@ -169,8 +191,7 @@ async function sendCategoryLimitAlert(userId, chatId, category, latestAmount, tx
   try {
     const now = Date.now();
     const currentMonth = monthKeyOf(now);
-    let nameCol = categoryLimitNameColumn();
-    let limitRes = await db
+    let { nameCol, result: limitRes } = await runCategoryLimitQuery(nameCol => db
       .from('category_limits')
       .select(`id, ${nameCol}, amount, alert_before, notify_bot, is_active, last_alert_sent_at, month_key`)
       .eq('user_id', userId)
@@ -178,21 +199,7 @@ async function sendCategoryLimitAlert(userId, chatId, category, latestAmount, tx
       .eq('is_active', true)
       .ilike(nameCol, category)
       .limit(1)
-      .maybeSingle();
-
-    if (limitRes.error && isMissingColumnError(limitRes.error, 'category_name')) {
-      categoryLimitNameColumnSupported = 'name';
-      nameCol = categoryLimitNameColumn();
-      limitRes = await db
-        .from('category_limits')
-        .select(`id, ${nameCol}, amount, alert_before, notify_bot, is_active, last_alert_sent_at, month_key`)
-        .eq('user_id', userId)
-        .eq('month_key', currentMonth)
-        .eq('is_active', true)
-        .ilike(nameCol, category)
-        .limit(1)
-        .maybeSingle();
-    }
+      .maybeSingle());
 
     if (limitRes.error && isMissingColumnError(limitRes.error, 'month_key')) {
       limitRes = await db
@@ -983,8 +990,7 @@ async function savePlanIntent(userId, chatId, intent) {
   const category = await ensureExpenseCategory(userId, intent.categoryName);
   const categoryName = category?.name || intent.categoryName;
 
-  let nameCol = categoryLimitNameColumn();
-  let current = await db
+  let { nameCol, result: current } = await runCategoryLimitQuery(nameCol => db
     .from('category_limits')
     .select(`id, amount, month_key, ${nameCol}`)
     .eq('user_id', userId)
@@ -992,21 +998,7 @@ async function savePlanIntent(userId, chatId, intent) {
     .ilike(nameCol, categoryName)
     .order('created_at', { ascending: false })
     .limit(1)
-    .maybeSingle();
-
-  if (current.error && isMissingColumnError(current.error, 'category_name')) {
-    categoryLimitNameColumnSupported = 'name';
-    nameCol = categoryLimitNameColumn();
-    current = await db
-      .from('category_limits')
-      .select(`id, amount, month_key, ${nameCol}`)
-      .eq('user_id', userId)
-      .eq('month_key', intent.monthKey)
-      .ilike(nameCol, categoryName)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-  }
+    .maybeSingle());
 
   if (current.error && isMissingColumnError(current.error, 'month_key')) {
     current = await db
@@ -1035,11 +1027,12 @@ async function savePlanIntent(userId, chatId, intent) {
 
   if (current.data?.id) {
     let updateRes = await db.from('category_limits').update(payload).eq('id', current.data.id).eq('user_id', userId);
-    if (updateRes.error && isMissingColumnError(updateRes.error, 'category_name')) {
-      categoryLimitNameColumnSupported = 'name';
-      nameCol = categoryLimitNameColumn();
+    if (updateRes.error && isMissingColumnError(updateRes.error, nameCol)) {
+      nameCol = alternateCategoryLimitNameColumn(nameCol);
+      categoryLimitNameColumnSupported = nameCol === 'name' ? 'name' : null;
       const fallbackPayload = { ...payload, [nameCol]: categoryName };
       delete fallbackPayload.category_name;
+      delete fallbackPayload.name;
       updateRes = await db.from('category_limits').update(fallbackPayload).eq('id', current.data.id).eq('user_id', userId);
     }
     if (updateRes.error && isMissingColumnError(updateRes.error, 'month_key')) {
@@ -1056,11 +1049,12 @@ async function savePlanIntent(userId, chatId, intent) {
   }
 
   let insertRes = await db.from('category_limits').insert([{ user_id: userId, ...payload }]);
-  if (insertRes.error && isMissingColumnError(insertRes.error, 'category_name')) {
-    categoryLimitNameColumnSupported = 'name';
-    nameCol = categoryLimitNameColumn();
+  if (insertRes.error && isMissingColumnError(insertRes.error, nameCol)) {
+    nameCol = alternateCategoryLimitNameColumn(nameCol);
+    categoryLimitNameColumnSupported = nameCol === 'name' ? 'name' : null;
     const fallbackPayload = { ...payload, [nameCol]: categoryName };
     delete fallbackPayload.category_name;
+    delete fallbackPayload.name;
     insertRes = await db.from('category_limits').insert([{ user_id: userId, ...fallbackPayload }]);
   }
   if (insertRes.error && isMissingColumnError(insertRes.error, 'month_key')) {
