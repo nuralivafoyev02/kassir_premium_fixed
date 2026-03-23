@@ -4443,3 +4443,45 @@ body {
         text-align: left;
     }
 }
+/* ===== v1.2.3 mobile full-screen modals + compact plans ===== */
+.plan-stats.compact {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+    #ov-plan-form .sheet,
+    #ov-export .sheet,
+    #ov-debt-form .sheet,
+    #ov-addcat .sheet {
+        width: calc(100vw - 10px);
+        max-width: none;
+        min-height: calc(var(--app-height) - 8px);
+        max-height: calc(var(--app-height) - 8px);
+        margin-top: auto;
+        border-radius: 26px 26px 0 0;
+        padding-bottom: calc(34px + var(--app-bottom-reserve));
+    }
+
+    #ov-export.ov.center,
+    #ov-debt-form.ov.center {
+        align-items: flex-end;
+        padding: 0;
+    }
+
+    #ov-export .sheet.c,
+    #ov-debt-form .sheet.c {
+        transform: translateY(100%);
+        opacity: 1;
+        border-radius: 26px 26px 0 0;
+        box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    #ov-export.ov.on .sheet.c,
+    #ov-debt-form.ov.on .sheet.c {
+        transform: translateY(0);
+    }
+
+    .plan-stats.compact {
+        grid-template-columns: 1fr;
+    }
+}

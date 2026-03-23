@@ -117,6 +117,15 @@ async function start() {
         }
       }
 
+      if (pathname === '/api/send-report-pdf') {
+        const handler = loadApiHandler('send-report-pdf');
+        if (handler) {
+          req.body = req.method === 'POST' ? await parseBody(req) : {};
+          const mRes = mockRes(res);
+          return handler(req, mRes);
+        }
+      }
+
       vite.middlewares(req, res, async () => {
         try {
           let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf8');

@@ -14,6 +14,8 @@
   let debtFilterDirection = 'all';
   let debtSearchQuery = '';
   let planFilterState = 'all';
+  let planAppNotifyReady = false;
+  const planNotifyState = new Map();
 
   const debtStoreKey = () => `kassa_debts_${UID}`;
   const planStoreKey = () => `kassa_plans_${UID}`;
@@ -146,6 +148,75 @@
     const msg = String(error?.message || error?.details || '').toLowerCase();
     return msg.includes(`table '${table}'`) || msg.includes(`relation "public.${table}"`) || (msg.includes(table.toLowerCase()) && msg.includes('schema cache')) || msg.includes('does not exist');
   };
+
+  const debtSettlementSourceRef = (debtId) => `debt:${debtId}`;
+  const debtSettlementMeta = (debt) => ({
+    type: debt.direction === 'receivable' ? 'income' : 'expense',
+    category: debt.direction === 'receivable' ? `Qarz qaytdi · ${debt.person_name}` : `Qarz qaytarildi · ${debt.person_name}`
+  });
+
+  async function createDebtSettlementTx(debt) {
+    const sourceRef = debtSettlementSourceRef(debt.id);
+    const existing = txList.find(tx => Number(tx.id) === Number(debt.settlement_tx_id || 0) || String(tx.source_ref || '') === sourceRef);
+    if (existing) return { tx: existing, created: false };
+
+    const meta = debtSettlementMeta(debt);
+    const row = {
+      user_id: UID,
+      amount: Number(debt.amount || 0),
+      category: meta.category,
+      type: meta.type,
+      date: isoNow(),
+      source_ref: sourceRef,
+    };
+
+    if (!db) {
+      const localTx = normTx({ ...row, id: Date.now() + Math.floor(Math.random() * 1000) });
+      txList.unshift(localTx);
+      return { tx: localTx, created: true };
+    }
+
+    const { data, error } = await insertTransactions([row], 'debt_settlement');
+    if (error) throw error;
+    const saved = normTx(Array.isArray(data) ? data[0] : data);
+    if (saved && !txList.some(tx => Number(tx.id) === Number(saved.id))) txList.unshift(saved);
+    return { tx: saved, created: true };
+  }
+
+  async function removeDebtSettlementTx(debt) {
+    const linkedId = Number(debt.settlement_tx_id || 0);
+    const sourceRef = debtSettlementSourceRef(debt.id);
+    txList = txList.filter(tx => !(linkedId ? Number(tx.id) === linkedId : String(tx.source_ref || '') === sourceRef));
+
+    if (!db) return;
+
+    let query = db.from('transactions').delete().eq('user_id', UID);
+    if (linkedId) query = query.eq('id', linkedId);
+    else query = query.eq('source_ref', sourceRef);
+    const { error } = await query;
+    if (error && !isMissingColumnError(error, 'source_ref')) throw error;
+  }
+
+  function syncPlanAppNotifications() {
+    const seen = new Set();
+    for (const plan of planList.filter(item => item.is_active !== false && item.notify_app)) {
+      const next = getPlanStats(plan);
+      const prev = planNotifyState.get(plan.id);
+      if (planAppNotifyReady && prev) {
+        const crossedAlert = prev.remaining > Number(plan.alert_before || 0) && next.remaining <= Number(plan.alert_before || 0) && !next.exceeded;
+        const crossedLimit = !prev.exceeded && next.exceeded;
+        if (crossedLimit) showErr(`${plan.category_name}: limit tugadi ⚠️`, 3200);
+        else if (crossedAlert && Number(plan.alert_before || 0) > 0) showErr(`${plan.category_name}: ${fmtMoney(next.remaining)} qoldi`, 3200);
+      }
+      planNotifyState.set(plan.id, { remaining: next.remaining, exceeded: next.exceeded });
+      seen.add(plan.id);
+    }
+
+    Array.from(planNotifyState.keys()).forEach((id) => {
+      if (!seen.has(id)) planNotifyState.delete(id);
+    });
+    planAppNotifyReady = true;
+  }
 
   function syncSettingsCategoryEntry() {
     document.querySelectorAll('.stg-item').forEach((el) => {
@@ -335,6 +406,7 @@
       note: String(row.note || '').trim(),
       status: row.status === 'paid' ? 'paid' : 'open',
       paid_at: row.paid_at || null,
+      settlement_tx_id: row.settlement_tx_id || null,
       created_at: row.created_at || isoNow(),
       updated_at: row.updated_at || isoNow(),
     };
@@ -724,37 +796,111 @@
 
   window.markDebtPaid = async function markDebtPaid(id) {
     const debt = debtList.find(item => Number(item.id) === Number(id));
-    if (!debt) return;
+    if (!debt || debt.status === 'paid') return;
+
     const stamp = isoNow();
-    debt.status = 'paid';
-    debt.paid_at = stamp;
-    if (!db || debtTableAvailable === false) { persistLocalDebts(); renderDebts(); return; }
-    const { error } = await db.from('debts').update({ status: 'paid', paid_at: stamp }).eq('id', id).eq('user_id', UID);
-    if (error) return showErr(error.message || 'Debt close failed');
-    renderDebts();
+    let settlement = null;
+
+    try {
+      settlement = await createDebtSettlementTx(debt);
+      debt.status = 'paid';
+      debt.paid_at = stamp;
+      debt.settlement_tx_id = settlement?.tx?.id || debt.settlement_tx_id || null;
+
+      if (!db || debtTableAvailable === false) {
+        persistLocalDebts();
+        renderDebts();
+        renderAll();
+        renderHistory();
+        return;
+      }
+
+      const { error } = await db.from('debts')
+        .update({ status: 'paid', paid_at: stamp, settlement_tx_id: debt.settlement_tx_id })
+        .eq('id', id)
+        .eq('user_id', UID);
+      if (error) throw error;
+
+      renderDebts();
+      renderAll();
+      renderHistory();
+    } catch (error) {
+      console.warn('[markDebtPaid]', error);
+      if (settlement?.created) {
+        try {
+          await removeDebtSettlementTx({ id: debt.id, settlement_tx_id: settlement.tx?.id || null });
+        } catch { }
+      }
+      debt.status = 'open';
+      debt.paid_at = null;
+      debt.settlement_tx_id = null;
+      showErr(error.message || 'Debt close failed');
+    }
   };
 
 
   window.reopenDebt = async function reopenDebt(id) {
     const debt = debtList.find(item => Number(item.id) === Number(id));
     if (!debt) return;
-    debt.status = 'open';
-    debt.paid_at = null;
-    if (!db || debtTableAvailable === false) { persistLocalDebts(); renderDebts(); return; }
-    const { error } = await db.from('debts').update({ status: 'open', paid_at: null }).eq('id', id).eq('user_id', UID);
-    if (error) return showErr(error.message || 'Debt reopen failed');
-    renderDebts();
+
+    const prevSettlementId = debt.settlement_tx_id || null;
+    try {
+      if (prevSettlementId) {
+        await removeDebtSettlementTx(debt);
+      }
+      debt.status = 'open';
+      debt.paid_at = null;
+      debt.settlement_tx_id = null;
+
+      if (!db || debtTableAvailable === false) {
+        persistLocalDebts();
+        renderDebts();
+        renderAll();
+        renderHistory();
+        return;
+      }
+
+      const { error } = await db.from('debts')
+        .update({ status: 'open', paid_at: null, settlement_tx_id: null })
+        .eq('id', id)
+        .eq('user_id', UID);
+      if (error) throw error;
+
+      renderDebts();
+      renderAll();
+      renderHistory();
+    } catch (error) {
+      debt.status = 'paid';
+      debt.settlement_tx_id = prevSettlementId;
+      showErr(error.message || 'Debt reopen failed');
+    }
   };
 
   window.deleteDebt = async function deleteDebt(id) {
     const debt = debtList.find(item => Number(item.id) === Number(id));
     if (!debt) return;
     if (!confirm(currentLang === 'ru' ? 'Удалить этот долг?' : currentLang === 'en' ? 'Delete this debt?' : "Bu qarzni o'chirasizmi?")) return;
-    debtList = debtList.filter(item => Number(item.id) !== Number(id));
-    if (!db || debtTableAvailable === false) { persistLocalDebts(); renderDebts(); return; }
-    const { error } = await db.from('debts').delete().eq('id', id).eq('user_id', UID);
-    if (error) return showErr(error.message || 'Debt delete failed');
-    renderDebts();
+
+    try {
+      if (debt.settlement_tx_id) {
+        await removeDebtSettlementTx(debt);
+      }
+      debtList = debtList.filter(item => Number(item.id) !== Number(id));
+      if (!db || debtTableAvailable === false) {
+        persistLocalDebts();
+        renderDebts();
+        renderAll();
+        renderHistory();
+        return;
+      }
+      const { error } = await db.from('debts').delete().eq('id', id).eq('user_id', UID);
+      if (error) throw error;
+      renderDebts();
+      renderAll();
+      renderHistory();
+    } catch (error) {
+      showErr(error.message || 'Debt delete failed');
+    }
   };
 
   function populatePlanCategoryOptions() {
@@ -823,6 +969,7 @@
         : stats.near
           ? (currentLang === 'ru' ? 'Ogohlantirish' : currentLang === 'en' ? 'Alert threshold' : 'Ogohlantirish')
           : (currentLang === 'ru' ? 'Nazorat ostida' : currentLang === 'en' ? 'On track' : 'Nazorat ostida');
+      const statusClass = stats.exceeded ? 'danger' : (stats.near ? 'warn' : 'good');
       return `
         <div class="route-item plan-route-item ${stats.exceeded ? 'plan-route-item-danger' : ''}">
           <div class="route-item-top">
@@ -833,14 +980,13 @@
             <div class="route-item-amount">${fmtMoney(plan.amount)}</div>
           </div>
           <div class="plan-progress"><span style="width:${Math.min(100, stats.percent)}%"></span></div>
-          <div class="plan-stats">
+          <div class="plan-stats compact">
             <div class="plan-stat"><span class="plan-stat-label">Sarflandi</span><span class="plan-stat-value">${fmtMoney(stats.spent)}</span></div>
             <div class="plan-stat"><span class="plan-stat-label">Qoldi</span><span class="plan-stat-value">${fmtMoney(stats.remaining)}</span></div>
-            <div class="plan-stat"><span class="plan-stat-label">Holat</span><span class="plan-stat-value">${escapeHtml(statusText)}</span></div>
+            <div class="plan-stat"><span class="plan-stat-label">Ogohlantirish</span><span class="plan-stat-value">${fmtMoney(plan.alert_before)}</span></div>
           </div>
           <div class="route-badges">
-            <span class="route-badge ${stats.exceeded ? 'danger' : (stats.near ? 'warn' : 'good')}">${escapeHtml(statusText)}</span>
-            <span class="route-badge">Alert: ${fmtMoney(plan.alert_before)}</span>
+            <span class="route-badge ${statusClass}">${escapeHtml(statusText)}</span>
             ${plan.notify_bot ? `<span class="route-badge">Bot</span>` : ''}
             ${plan.notify_app ? `<span class="route-badge good">App</span>` : ''}
           </div>
@@ -850,6 +996,8 @@
           </div>
         </div>`;
     }).join('');
+
+    syncPlanAppNotifications();
   }
 
   window.openPlanForm = function openPlanForm(id = null) {
@@ -928,20 +1076,8 @@
     return Object.fromEntries(planList.map(plan => [plan.id, getPlanStats(plan)]));
   }
 
-  function notifyPlanThresholdCrossing(before) {
-    planList.forEach(plan => {
-      if (!plan.notify_app) return;
-      const prev = before?.[plan.id];
-      const next = getPlanStats(plan);
-      if (!prev) return;
-      const crossedAlert = prev.remaining > Number(plan.alert_before || 0) && next.remaining <= Number(plan.alert_before || 0);
-      const crossedLimit = !prev.exceeded && next.exceeded;
-      if (crossedLimit) {
-        showErr(`${plan.category_name}: limit tugadi ⚠️`, 3200);
-      } else if (crossedAlert && Number(plan.alert_before || 0) > 0) {
-        showErr(`${plan.category_name}: ${fmtMoney(next.remaining)} qoldi`, 3200);
-      }
-    });
+  function notifyPlanThresholdCrossing(_before) {
+    syncPlanAppNotifications();
   }
 
   function bindFeatureRealtime() {

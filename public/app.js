@@ -154,6 +154,7 @@ let histOffset = 0;
 let hasMoreTx = true;
 let loadingMore = false;
 let txSourceColumnSupported = null;
+let txSourceRefColumnSupported = null;
 let currentReceipt = { src: '', name: '' };
 let receiptBlobUrl = null;
 let userAvatarColumnSupported = null;
@@ -407,20 +408,36 @@ async function insertTransactions(rows, source = 'mini_app') {
   if (!db) throw new Error('Database client mavjud emas');
   const payload = (rows || []).map(row => ({ ...row }));
 
-  if (txSourceColumnSupported !== false) {
-    const withSource = payload.map(row => ({ ...row, source }));
-    const res = await db.from('transactions').insert(withSource).select();
+  if (txSourceColumnSupported !== false || txSourceRefColumnSupported !== false) {
+    const enriched = payload.map(row => {
+      const next = { ...row };
+      if (txSourceColumnSupported !== false) next.source = source;
+      if (txSourceRefColumnSupported !== false && row.source_ref) next.source_ref = row.source_ref;
+      return next;
+    });
+
+    const res = await db.from('transactions').insert(enriched).select();
     if (!res.error) {
-      txSourceColumnSupported = true;
+      if (txSourceColumnSupported !== false) txSourceColumnSupported = true;
+      if (payload.some(row => row.source_ref)) txSourceRefColumnSupported = true;
       return res;
     }
-    if (!isMissingColumnError(res.error, 'source')) {
-      return res;
+
+    if (isMissingColumnError(res.error, 'source_ref')) {
+      txSourceRefColumnSupported = false;
+      return insertTransactions(rows, source);
     }
-    txSourceColumnSupported = false;
+
+    if (isMissingColumnError(res.error, 'source')) {
+      txSourceColumnSupported = false;
+      return insertTransactions(rows, source);
+    }
+
+    return res;
   }
 
-  return db.from('transactions').insert(payload).select();
+  const plain = payload.map(({ source_ref, ...rest }) => ({ ...rest }));
+  return db.from('transactions').insert(plain).select();
 }
 
 async function fetchAllTransactions() {
@@ -2003,6 +2020,43 @@ function updateExportPreview() {
   if (periodEl) periodEl.textContent = sStr && eStr ? `${sStr.replaceAll('-', '.')} — ${eStr.replaceAll('-', '.')}` : '—';
 }
 
+async function sendPdfToBot(blob, fileName, caption) {
+  const reader = new FileReader();
+  const base64 = await new Promise((resolve, reject) => {
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+  const resp = await fetch('/api/send-report-pdf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id: UID,
+      file_name: fileName,
+      caption,
+      base64,
+    })
+  });
+
+  let payload = {};
+  try { payload = await resp.json(); } catch { }
+  if (!resp.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `HTTP ${resp.status}`);
+  }
+}
+
+function downloadPdfBlob(blob, fileName) {
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 4000);
+}
+
 function makePDF() {
   const pdfMake = window.pdfMake;
   const createBtn = $('ex-create-btn');
@@ -2127,21 +2181,29 @@ function makePDF() {
     tdAmount: { fontSize: 9, bold: true }
   };
 
-  pdfMake.createPdf(dd).getBlob(blob => {
-    const href = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = href;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(href), 4000);
+  pdfMake.createPdf(dd).getBlob(async (blob) => {
+    try {
+      const caption = `📄 ${tt('pdf_title', 'PDF Hisobot')}
+${sStr.replaceAll('-', '.')} — ${eStr.replaceAll('-', '.')}`;
+      if (UID && tg?.initDataUnsafe?.user?.id) {
+        await sendPdfToBot(blob, fileName, caption);
+        showErr(currentLang === 'ru' ? 'PDF ботga yuborildi ✅' : currentLang === 'en' ? 'PDF sent to the bot ✅' : 'PDF botga yuborildi ✅', 2600);
+      } else {
+        downloadPdfBlob(blob, fileName);
+      }
+      closeOv('ov-export');
+    } catch (error) {
+      console.warn('[makePDF]', error);
+      downloadPdfBlob(blob, fileName);
+      showErr(currentLang === 'ru' ? 'Botga yuborish muvaffaqiyatsiz. Fayl yuklab olindi.' : currentLang === 'en' ? 'Sending to the bot failed. The file was downloaded instead.' : "Botga yuborib bo'lmadi. Fayl yuklab olindi.", 3200);
+      closeOv('ov-export');
+    } finally {
+      if (createBtn) {
+        createBtn.disabled = false;
+        createBtn.textContent = tt('pdf_create', 'Yaratish');
+      }
+    }
   });
-  if (createBtn) {
-    createBtn.disabled = false;
-    createBtn.textContent = tt('pdf_create', 'Yaratish');
-  }
-  closeOv('ov-export');
 }
 
 function doExport() {

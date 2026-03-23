@@ -506,9 +506,9 @@ function buildBroadcastResultMarkup(bc, result) {
 }
 
 async function fetchUserCategories(userId) {
-  let res = await db.from('categories').select('name, type, keywords').eq('user_id', userId);
+  let res = await db.from('categories').select('id, name, type, keywords').eq('user_id', userId);
   if (res.error && isMissingColumnError(res.error, 'keywords')) {
-    res = await db.from('categories').select('name, type').eq('user_id', userId);
+    res = await db.from('categories').select('id, name, type').eq('user_id', userId);
   }
   if (res.error) throw res.error;
   return res.data || [];
@@ -623,16 +623,17 @@ Xabar: "${text}"
 
 Qoidalar:
 1. "yuz ming", "bir yarim mln" kabi so'zlarni raqamga aylantir.
-2. "berdim", "ketdi", "sotib oldim" so'zlari odatda chiqim (expense).
-3. "tushdi", "oldim", "keldi", "oylik", "bonus" so'zlari odatda kirim (income).
-4. Agar valyuta dollar ($) bo'lsa, isUSD: true qilib belgilang.
-5. Faqat JSON qaytaring: {"amount": number, "type": "income"|"expense", "category": "string", "isUSD": boolean}
+2. "berdim", "to'ladim", "sarfladim", "sotib oldim" odatda chiqim (expense).
+3. "dadam berdilar", "mijoz yubordi", "oylik tushdi", "bonus keldi" odatda kirim (income).
+4. Faqat "oldim" so'ziga qarab income demang: "kitob oldim" bu expense, "mijozdan oldim" bu income.
+5. Agar valyuta dollar ($) bo'lsa, isUSD: true qilib belgilang.
+6. Faqat JSON qaytaring: {"amount": number, "type": "income"|"expense", "category": "string", "isUSD": boolean}
 Agar tushunarsiz bo'lsa, null qaytaring.`;
 
     const res = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' },
       temperature: 0,
     });
 
@@ -651,44 +652,42 @@ Agar tushunarsiz bo'lsa, null qaytaring.`;
   }
 }
 
-// ─── TEXT PARSER ──────────────────────────────────────────
-// Matndan summa, tur va kategoriyani ajratib olish (Regex asosslangan fallback)
-function parseText(raw) {
+function titleCaseWords(value) {
+  return String(value || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+    .trim();
+}
+
+function extractAmountMeta(raw) {
   if (!raw) return null;
   const text = String(raw).trim();
-  if (!text) return null;
-
   const lower = text.toLowerCase();
-
-  // Dollar belgilari bormi?
   const isUSD = /\$|\busd\b|dollar/i.test(lower);
 
-  // Belgilarni tozalash — raqam, bo'shliq, nuqta, vergulni qoldirish
   let clean = lower
     .replace(/so'?m|sum|uzs|\$|€|\busd\b|dollar/gi, ' ')
-    .replace(/[^\d\s.,a-z']/g, ' ')
+    .replace(/[^\d\s.,a-zа-яёӣқғҳў\-']/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Raqam va suffix topish
   const m = clean.match(/(\d[\d\s,.]*)(\s*(?:k|ming|mln|mlrd|million|milliard|m|b)\b)?/i);
   if (!m) return null;
 
   let numStr = m[1].trim();
   numStr = numStr
-    .replace(/[. ](?=\d{3}(?:\D|$))/g, '') // minglik nuqta yoki bo'shliq: 500.000 -> 500000
-    .replace(/,/g, '.')                    // vergulni nuqtaga: 1,5 -> 1.5
-    .replace(/\s/g, '');                   // qolgan bo'shliqlar
+    .replace(/[. ](?=\d{3}(?:\D|$))/g, '')
+    .replace(/,/g, '.')
+    .replace(/\s/g, '');
 
   const amount = parseFloat(numStr);
-  if (!amount || isNaN(amount) || !Number.isFinite(amount)) return null;
+  if (!amount || Number.isNaN(amount) || !Number.isFinite(amount)) return null;
 
-  // Suffix multiplier
   const suffix = (m[2] || '').replace(/\s/g, '').toLowerCase();
   let finalAmount = amount;
 
-  // Redundancy check: if user wrote "500 000 ming", amount is 500000. 
-  // If amount >= 1000 and suffix is 'k'/'ming', we skip multiplication.
   const isAlreadyBig = (suffix === 'k' || suffix === 'ming') && amount >= 1000;
   const isAlreadyMln = (suffix === 'mln' || suffix === 'm' || suffix === 'million') && amount >= 1000000;
 
@@ -702,25 +701,260 @@ function parseText(raw) {
 
   if (!Number.isFinite(finalAmount) || finalAmount <= 0) return null;
 
-  // Tur aniqlash
-  const incWords = ['kirim', 'tushdi', 'keldi', 'avans', 'oylik', 'bonus', 'oldim', 'daromad', 'maosh', 'mijoz', 'cashback', 'qaytdi', 'foyda'];
-  const expWords = ['chiqim', 'ketdi', 'berdim', 'sarfladim', 'xarajat', 'taksi', 'ovqat', 'tushlik', 'tolov', "to'lov", 'ijara', 'kommunal', 'kredit', 'dori'];
+  return {
+    amount: Math.round(finalAmount),
+    isUSD,
+    clean,
+    rawMatch: m[0]
+  };
+}
 
-  let type = 'expense';
-  if (/^\+/.test(lower)) type = 'income';
-  else if (/^-/.test(lower)) type = 'expense';
-  else if (/\w+dan\b/i.test(lower)) type = 'income';
-  else if (incWords.some(w => lower.includes(w))) type = 'income';
-  else if (expWords.some(w => lower.includes(w))) type = 'expense';
-  else if (/\w+ga\b/i.test(lower)) type = 'expense';
+function inferTransactionType(lower) {
+  let incomeScore = 0;
+  let expenseScore = 0;
 
-  let catPart = clean.replace(m[0], '').replace(/^\s*[+\-]\s*/, '').trim();
-  catPart = catPart.replace(/\b(so'?m|sum|uzs|usd|dollar|kirim|chiqim|berdim|oldim|tushdi|ketdi)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  if (/^\+/.test(lower)) incomeScore += 5;
+  if (/^-/.test(lower)) expenseScore += 5;
+
+  if (/\b(?:oylik|maosh|avans|bonus|cashback|daromad|foyda|grant|stipendiya)\b/i.test(lower)) incomeScore += 7;
+  if (/\b(?:dadam|onam|akam|ukam|opam|singlim|do'?stim|mijoz|klient|boshliq|ishxona|kompaniya|ustoz)\b.*\b(?:berdi|berdilar|yubordi|jo'?natdi|o'?tkazdi|tashladi|to'?ladi)\b/i.test(lower)) incomeScore += 8;
+  if (/\b(?:menga|hisobimga|kartamga)\b.*\b(?:tushdi|keldi|o'?tdi|kelib tushdi)\b/i.test(lower)) incomeScore += 8;
+  if (/\b(?:mijozdan|klientdan|dadamdan|onamdan|akamdan|ukamdan|opamdan|singlimdan|do'?stimdan|boshliqdan)\b.*\b(?:oldim|oldik|qabul qildim)\b/i.test(lower)) incomeScore += 7;
+  if (/\b(?:qaytdi|qaytarib berdi|qaytarildi)\b/i.test(lower)) incomeScore += 4;
+  if (/\b(?:sovg'a|sovga|hadya)\b/i.test(lower)) incomeScore += 4;
+
+  if (/\b(?:berdim|to'?ladim|sarfladim|jo'?natdim|o'?tkazdim|uzatdim|chiqim|xarajat)\b/i.test(lower)) expenseScore += 8;
+  if (/\b(?:sotib oldim|xarid qildim)\b/i.test(lower)) expenseScore += 8;
+  if (/\boldim\b/i.test(lower) && !/\b(?:mijozdan|klientdan|dadamdan|onamdan|akamdan|ukamdan|opamdan|singlimdan|do'?stimdan|boshliqdan)\b/i.test(lower) && !/\b(?:oylik|maosh|avans|bonus|cashback|daromad|foyda|qaytim|astatka)\b/i.test(lower)) expenseScore += 4;
+  if (/\b\S+ga\b.*\b(?:berdim|to'?ladim|o'?tkazdim)\b/i.test(lower)) expenseScore += 5;
+  if (/\b(?:taksi|yandex|ovqat|tushlik|kechki ovqat|non|market|korzinka|bozor|ijara|kommunal|kredit|dori|apteka|internet|wifi|benzin|zapravka|subscription|obuna|kiyim|krossovka)\b/i.test(lower)) expenseScore += 5;
+
+  return {
+    incomeScore,
+    expenseScore,
+    type: incomeScore > expenseScore ? 'income' : 'expense'
+  };
+}
+
+function inferSemanticCategory(lower, type, rawCategory) {
+  if (type === 'income') {
+    if (/\b(?:oylik|maosh)\b/i.test(lower)) return 'Oylik';
+    if (/\bavans\b/i.test(lower)) return 'Avans';
+    if (/\b(?:bonus|cashback|mukofot)\b/i.test(lower)) return 'Bonus';
+    if (/\b(?:mijoz|klient|sotuv|zakaz|savdo)\b/i.test(lower)) return 'Sotuv';
+    if (/\b(?:dadam|onam|akam|ukam|opam|singlim|do'?stim|sovg'a|sovga|hadya)\b/i.test(lower)) return "Sovg'a";
+    if (/\b(?:qaytdi|qaytarib berdi|qaytarildi)\b/i.test(lower)) return 'Astatka';
+  }
+
+  const aliasHit = scoreCategoryFromAliases(type, normalizeTextForMatch(`${lower} ${rawCategory}`));
+  if (aliasHit.best) return aliasHit.best;
+
+  return rawCategory;
+}
+
+function cleanupCategoryText(value) {
+  const cleaned = String(value || '')
+    .replace(/\b(so'?m|sum|uzs|usd|dollar|kirim|chiqim|berdim|berdi|berdilar|oldim|oldik|tushdi|ketdi|keldi|oylik|bonus|avans|maosh|menga|hisobimga|kartamga|to'?ladim|sarfladim|sotib|xarid|qildim|plan|reja|limit|byudjet)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned;
+}
+
+function parsePlanIntent(raw) {
+  const text = String(raw || '').trim();
+  if (!text || !/\b(?:reja|plan|limit|byudjet|budjet)\b/i.test(text)) return null;
+
+  const amountMeta = extractAmountMeta(text);
+  if (!amountMeta) return null;
+
+  const cleaned = cleanupCategoryText(String(text)
+    .replace(amountMeta.rawMatch, ' ')
+    .replace(/\b(?:reja|plan|limit|byudjet|budjet|oylik|oyiga|kerak|qilib qo'y|qilib qoy|qilib ber|tuzib ber|tuzib qo'y|tuzib qoy|tuz|tuzing)\b/gi, ' '));
+
+  let categoryName = '';
+  const beforeUchun = cleaned.match(/(.+?)\s+uchun\b/i);
+  if (beforeUchun?.[1]) categoryName = beforeUchun[1];
+  if (!categoryName) {
+    const afterIntent = cleaned.match(/\b(?:reja|plan|limit|byudjet|budjet)\b\s+(.+)$/i);
+    if (afterIntent?.[1]) categoryName = afterIntent[1];
+  }
+  if (!categoryName) categoryName = cleaned;
+
+  categoryName = titleCaseWords(categoryName.replace(/\b(?:uchun|oy|oylik|oyiga)\b/gi, ' ').replace(/\s+/g, ' ').trim());
+  if (!categoryName) return null;
+
+  return {
+    amount: amountMeta.amount,
+    categoryName,
+    alertBefore: Math.round(amountMeta.amount * 0.1),
+    monthKey: monthKeyOf(),
+  };
+}
+
+function parseDebtIntent(raw) {
+  const text = String(raw || '').trim();
+  const lower = text.toLowerCase();
+  if (!text || !/\b(?:qarz|nasiya)\b/i.test(lower)) return null;
+
+  const amountMeta = extractAmountMeta(text);
+  if (!amountMeta) return null;
+
+  let direction = null;
+  if (/\b(?:qarz|nasiya)\b.*\b(?:berdim|berib turdim|yozib berdim)\b/i.test(lower) || /\bga\b.*\b(?:qarz|nasiya)\b.*\b(?:berdim|berib turdim)\b/i.test(lower)) {
+    direction = 'receivable';
+  } else if (/\b(?:qarz|nasiya)\b.*\b(?:oldim|olib turdim)\b/i.test(lower) || /\bdan\b.*\b(?:qarz|nasiya)\b.*\b(?:oldim|olib turdim)\b/i.test(lower)) {
+    direction = 'payable';
+  }
+
+  if (!direction) return null;
+
+  let personName = '';
+  if (direction === 'receivable') {
+    const m = text.match(/([\p{L}0-9'’`\-\s]{2,}?)\s+ga\b/iu);
+    if (m?.[1]) personName = m[1];
+  } else {
+    const m = text.match(/([\p{L}0-9'’`\-\s]{2,}?)\s+dan\b/iu);
+    if (m?.[1]) personName = m[1];
+  }
+
+  personName = titleCaseWords(personName.replace(amountMeta.rawMatch, ' ').replace(/\b(?:qarz|nasiya|berdim|oldim|berib turdim|olib turdim)\b/gi, ' ').trim());
+  if (!personName) return null;
+
+  return {
+    amount: amountMeta.amount,
+    personName,
+    direction,
+    note: text,
+  };
+}
+
+async function ensureExpenseCategory(userId, categoryName) {
+  const cats = await fetchUserCategories(userId);
+  const normalized = normalizeTextForMatch(categoryName);
+  const existing = (cats || []).find(cat => cat.type === 'expense' && normalizeTextForMatch(cat.name) === normalized);
+  if (existing) return existing;
+
+  const { data, error } = await db
+    .from('categories')
+    .insert([{ user_id: userId, name: categoryName, type: 'expense', icon: 'target' }])
+    .select('id, name, type, keywords')
+    .maybeSingle();
+
+  if (error && !String(error.message || '').toLowerCase().includes('duplicate')) throw error;
+  if (data) return data;
+
+  const fresh = await fetchUserCategories(userId);
+  return fresh.find(cat => cat.type === 'expense' && normalizeTextForMatch(cat.name) === normalized) || null;
+}
+
+async function savePlanIntent(userId, chatId, intent) {
+  const category = await ensureExpenseCategory(userId, intent.categoryName);
+  const categoryName = category?.name || intent.categoryName;
+
+  let current = await db
+    .from('category_limits')
+    .select('id, amount, month_key, category_name')
+    .eq('user_id', userId)
+    .eq('month_key', intent.monthKey)
+    .ilike('category_name', categoryName)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (current.error && isMissingColumnError(current.error, 'month_key')) {
+    current = await db
+      .from('category_limits')
+      .select('id, amount, category_name')
+      .eq('user_id', userId)
+      .ilike('category_name', categoryName)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+  }
+
+  if (current.error && !isMissingTableError(current.error, 'category_limits')) throw current.error;
+
+  const payload = {
+    category_id: category?.id || null,
+    category_name: categoryName,
+    amount: intent.amount,
+    alert_before: intent.alertBefore,
+    notify_bot: true,
+    notify_app: true,
+    is_active: true,
+    month_key: intent.monthKey,
+  };
+
+  if (current.data?.id) {
+    const { error } = await db.from('category_limits').update(payload).eq('id', current.data.id).eq('user_id', userId);
+    if (error) throw error;
+    await bot.sendMessage(chatId,
+      `🎯 <b>Reja yangilandi</b>\n\n📂 Kategoriya: <b>${esc(categoryName)}</b>\n💰 Limit: <b>${numFmt(intent.amount)} so'm</b>\n⚠️ Ogohlantirish: <b>${numFmt(intent.alertBefore)} so'm</b>\n📅 Oy: <b>${esc(intent.monthKey)}</b>\n\nMini App > Reja bo'limida ko'rinadi.`,
+      { parse_mode: 'HTML' }
+    ).catch(() => null);
+    return true;
+  }
+
+  const { error } = await db.from('category_limits').insert([{ user_id: userId, ...payload }]);
+  if (error) throw error;
+
+  await bot.sendMessage(chatId,
+    `🎯 <b>Reja yaratildi</b>\n\n📂 Kategoriya: <b>${esc(categoryName)}</b>\n💰 Limit: <b>${numFmt(intent.amount)} so'm</b>\n⚠️ Ogohlantirish: <b>${numFmt(intent.alertBefore)} so'm</b>\n📅 Oy: <b>${esc(intent.monthKey)}</b>\n\nMini App > Reja bo'limida ko'rinadi.`,
+    { parse_mode: 'HTML' }
+  ).catch(() => null);
+  return true;
+}
+
+async function saveDebtIntent(userId, chatId, intent) {
+  const payload = {
+    user_id: userId,
+    person_name: intent.personName,
+    amount: intent.amount,
+    direction: intent.direction,
+    due_at: null,
+    remind_at: null,
+    note: intent.note,
+    status: 'open'
+  };
+
+  const { error } = await db.from('debts').insert([payload]);
+  if (error) throw error;
+
+  const directionText = intent.direction === 'receivable' ? 'Sizga qaytadi' : 'Siz qaytarasiz';
+  await bot.sendMessage(chatId,
+    `🤝 <b>Qarz saqlandi</b>\n\n👤 Kim bilan: <b>${esc(intent.personName)}</b>\n💰 Summa: <b>${numFmt(intent.amount)} so'm</b>\n📌 Yo'nalish: <b>${esc(directionText)}</b>\n\nMuddat va eslatmani Mini App > Qarzlar bo'limidan belgilashingiz mumkin.`,
+    { parse_mode: 'HTML' }
+  ).catch(() => null);
+  return true;
+}
+
+// ─── TEXT PARSER ──────────────────────────────────────────
+// Matndan summa, tur va kategoriyani ajratib olish (Regex asosslangan fallback)
+function parseText(raw) {
+  if (!raw) return null;
+  const text = String(raw).trim();
+  if (!text) return null;
+
+  const lower = text.toLowerCase();
+  const amountMeta = extractAmountMeta(text);
+  if (!amountMeta) return null;
+
+  const typeMeta = inferTransactionType(lower);
+  const type = typeMeta.type;
+
+  let catPart = amountMeta.clean.replace(amountMeta.rawMatch, ' ').replace(/^\s*[+\-]\s*/, '').trim();
+  catPart = cleanupCategoryText(catPart);
   if (!catPart || catPart.length < 2) catPart = type === 'income' ? 'kirim' : 'xarajat';
 
-  const category = catPart.charAt(0).toUpperCase() + catPart.slice(1);
+  const inferredCategory = inferSemanticCategory(lower, type, titleCaseWords(catPart));
+  const category = titleCaseWords(inferredCategory || catPart || (type === 'income' ? 'Kirim' : 'Xarajat'));
 
-  return { amount: Math.round(finalAmount), type, category, isUSD };
+  return {
+    amount: amountMeta.amount,
+    type,
+    category,
+    isUSD: amountMeta.isUSD
+  };
 }
 
 // ─── SAVE TRANSACTION ────────────────────────────────────
@@ -1280,6 +1514,33 @@ module.exports = async (req, res) => {
 
       log('del-last', { userId, id: last.id, category: last.category });
       return res.status(200).json({ ok: true });
+    }
+
+    // ── Aqlli intentlar: reja va qarz ──
+    if (text) {
+      const debtIntent = parseDebtIntent(text);
+      if (debtIntent) {
+        try {
+          await saveDebtIntent(userId, chatId, debtIntent);
+          return res.status(200).json({ ok: true });
+        } catch (error) {
+          logErr('debt-intent', error, { userId, text });
+          await bot.sendMessage(chatId, `⚠️ Qarzni saqlashda xatolik: ${esc(error.message || "noma'lum")}`, { parse_mode: 'HTML' }).catch(() => null);
+          return res.status(200).json({ ok: true });
+        }
+      }
+
+      const planIntent = parsePlanIntent(text);
+      if (planIntent) {
+        try {
+          await savePlanIntent(userId, chatId, planIntent);
+          return res.status(200).json({ ok: true });
+        } catch (error) {
+          logErr('plan-intent', error, { userId, text });
+          await bot.sendMessage(chatId, `⚠️ Rejani saqlashda xatolik: ${esc(error.message || "noma'lum")}`, { parse_mode: 'HTML' }).catch(() => null);
+          return res.status(200).json({ ok: true });
+        }
+      }
     }
 
     // ── Ovozli xabar ──
