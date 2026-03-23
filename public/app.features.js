@@ -154,10 +154,18 @@
     const target = String(column || '').toLowerCase();
     return !!target && msg.includes(target) && (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('unknown column') || msg.includes('could not find the column'));
   };
+  const notNullConstraintOn = (error, column) => {
+    const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+    const target = String(column || '').toLowerCase();
+    return !!target && msg.includes('null value') && msg.includes(target) && msg.includes('not-null constraint');
+  };
+  const normalizePlanName = (row) => String(row?.category_name || row?.name || row?.category || '').trim();
+  const normalizePlanAmount = (row) => Number(row?.amount ?? row?.limit_amount ?? row?.plan_amount ?? row?.limit ?? 0) || 0;
+  const normalizePlanAlert = (row) => Number(row?.alert_before ?? row?.alert_amount ?? row?.alert_limit ?? 0) || 0;
   const planNameCol = () => (planNameColumnSupported === 'name' ? 'name' : 'category_name');
   const planDbPayload = (payload) => {
     const next = { ...payload };
-    const value = String(next.category_name || next.name || '').trim();
+    const value = normalizePlanName(next);
     delete next.category_name;
     delete next.name;
     next[planNameCol()] = value;
@@ -432,13 +440,13 @@
       id: row.id || Date.now(),
       user_id: row.user_id || UID,
       category_id: row.category_id || null,
-      category_name: String(row.category_name || row.name || '').trim(),
-      amount: Number(row.amount) || 0,
-      alert_before: Number(row.alert_before) || 0,
+      category_name: normalizePlanName(row),
+      amount: normalizePlanAmount(row),
+      alert_before: normalizePlanAlert(row),
       notify_bot: row.notify_bot !== false,
       notify_app: row.notify_app !== false,
       is_active: row.is_active !== false,
-      month_key: row.month_key || monthKey(),
+      month_key: row.month_key || row.month || monthKey(),
       created_at: row.created_at || isoNow(),
       updated_at: row.updated_at || isoNow(),
     };
@@ -467,7 +475,13 @@
       planList = (readJson(planStoreKey(), []) || []).map(normalizePlan);
       return;
     }
-    const { data, error } = await db.from('category_limits').select('*').eq('user_id', UID).order('created_at', { ascending: false });
+
+    let response = await db.from('category_limits').select('*').eq('user_id', UID).order('created_at', { ascending: false });
+    if (response.error && missingColumn(response.error, 'created_at')) {
+      response = await db.from('category_limits').select('*').eq('user_id', UID);
+    }
+
+    const { data, error } = response;
     if (error) {
       if (relationMissing(error, 'category_limits')) {
         planTableAvailable = false;
@@ -478,7 +492,14 @@
     }
     planTableAvailable = true;
     if (Array.isArray(data) && data.some(row => row && typeof row === 'object' && 'name' in row && !('category_name' in row))) planNameColumnSupported = 'name';
-    planList = (data || []).map(normalizePlan);
+    planList = (data || [])
+      .map(normalizePlan)
+      .sort((a, b) => {
+        const aTs = new Date(a.created_at || 0).getTime() || 0;
+        const bTs = new Date(b.created_at || 0).getTime() || 0;
+        if (bTs !== aTs) return bTs - aTs;
+        return Number(b.id || 0) - Number(a.id || 0);
+      });
   }
 
   function persistLocalDebts() { writeJson(debtStoreKey(), debtList); }
@@ -1068,7 +1089,12 @@
     if (!amount) return showErr(tt('err_amount_required', 'Summani kiriting'));
 
     const payload = normalizePlan({ id: id || Date.now(), user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active });
-    const dbPayload = planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active });
+    const buildPlanWritePayload = (includeMonth = true, includeLegacyCategory = false) => {
+      const base = planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, ...(includeMonth ? { month_key: mk } : {}), is_active });
+      if (includeLegacyCategory) base.category = category_name;
+      return base;
+    };
+    const dbPayload = buildPlanWritePayload(true, false);
     if (!db || planTableAvailable === false) {
       const idx = planList.findIndex(item => Number(item.id) === Number(payload.id));
       if (idx >= 0) planList[idx] = payload; else planList.unshift(payload);
@@ -1078,16 +1104,39 @@
       return;
     }
 
+    const runPlanMutation = async (mode) => {
+      let activePayload = { ...dbPayload };
+      for (let i = 0; i < 6; i += 1) {
+        let result = mode === 'update'
+          ? await db.from('category_limits').update(activePayload).eq('id', id).eq('user_id', UID).select().maybeSingle()
+          : await db.from('category_limits').insert([{ user_id: UID, ...activePayload }]).select().maybeSingle();
+
+        if (!result.error) return result;
+
+        if (missingColumn(result.error, 'category_name')) {
+          planNameColumnSupported = 'name';
+          activePayload = buildPlanWritePayload('month_key' in activePayload, 'category' in activePayload);
+          continue;
+        }
+        if (missingColumn(result.error, 'month_key')) {
+          activePayload = buildPlanWritePayload(false, 'category' in activePayload);
+          continue;
+        }
+        if (notNullConstraintOn(result.error, 'category')) {
+          activePayload = buildPlanWritePayload('month_key' in activePayload, true);
+          continue;
+        }
+        if (missingColumn(result.error, 'category')) {
+          activePayload = buildPlanWritePayload('month_key' in activePayload, false);
+          continue;
+        }
+        return result;
+      }
+      return { error: new Error('Plan write fallback exhausted') };
+    };
+
     if (id) {
-      let result = await db.from('category_limits').update(dbPayload).eq('id', id).eq('user_id', UID).select().maybeSingle();
-      if (result.error && missingColumn(result.error, 'category_name')) {
-        planNameColumnSupported = 'name';
-        result = await db.from('category_limits').update(planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active })).eq('id', id).eq('user_id', UID).select().maybeSingle();
-      }
-      if (result.error && missingColumn(result.error, 'month_key')) {
-        const fallback = planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, is_active });
-        result = await db.from('category_limits').update(fallback).eq('id', id).eq('user_id', UID).select().maybeSingle();
-      }
+      const result = await runPlanMutation('update');
       if (result.error) {
         if (relationMissing(result.error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
         return showErr(result.error.message || 'Plan update failed');
@@ -1095,15 +1144,7 @@
       const idx = planList.findIndex(item => Number(item.id) === Number(id));
       if (idx >= 0) planList[idx] = normalizePlan(result.data || payload);
     } else {
-      let result = await db.from('category_limits').insert([{ user_id: UID, ...dbPayload }]).select().maybeSingle();
-      if (result.error && missingColumn(result.error, 'category_name')) {
-        planNameColumnSupported = 'name';
-        result = await db.from('category_limits').insert([{ user_id: UID, ...planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active }) }]).select().maybeSingle();
-      }
-      if (result.error && missingColumn(result.error, 'month_key')) {
-        const fallback = planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, is_active });
-        result = await db.from('category_limits').insert([{ user_id: UID, ...fallback }]).select().maybeSingle();
-      }
+      const result = await runPlanMutation('insert');
       if (result.error) {
         if (relationMissing(result.error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
         return showErr(result.error.message || 'Plan save failed');
