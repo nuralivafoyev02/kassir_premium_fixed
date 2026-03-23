@@ -41,23 +41,38 @@ const KB = {
 
 const GUIDE = `<b>📖 Qo'llanma</b>
 
-Menga oddiy matn ko‘rinishida yozing — men avtomatik ravishda <b>kirim</b> yoki <b>chiqim</b> sifatida saqlayman.
+Menga oddiy matn yozing — men siz nima demoqchi ekaningizni kontekstga qarab tushunishga harakat qilaman 🤖
 
 <b>💸 Chiqim misollari:</b>
   • <i>50 ming tushlik</i>
-  • <i>30000 Yandex</i>
   • <i>Taksiga 20 ming berdim</i>
+  • <i>Akamga 100 ming o'tkazdim</i>
 
 <b>💰 Kirim misollari:</b>
-  • <i>2 mln oylik</i>
-  • <i>100 dollar bonus tushdi</i>
-  • <i>Mijozdan 500k oldim</i>
+  • <i>200 ming dadam berdilar</i>
+  • <i>Mijozdan 500 ming oldim</i>
+  • <i>Oylik tushdi 4 mln</i>
 
-<b>🧾 Chek qo‘shish:</b>
-Chek rasmini izoh bilan birga yuboring — summani va tavsifni o‘zim aniqlayman.
+<b>🤝 Qarz yozish:</b>
+  • <i>Suxrobga qarz 100 ming</i>
+  • <i>Suxrobga 100 ming qarz berdim</i>
+  • <i>Suxrobdan qarz oldim 250 ming</i>
 
-<b>💱 Valyuta:</b>
-Valyuta kurslari ilova (<b>App</b>) sozlamalaridan avtomatik olinadi.`;
+<b>🔁 Qarz qaytishini yozish:</b>
+  • <i>Suxrob 100 ming qaytardi</i>
+  • <i>100 ming Suxrobdan qaytdi</i>
+  • <i>Suxrobga 80 ming qaytardim</i>
+
+<b>🎯 Reja / plan tuzish:</b>
+  • <i>5 mln farzandlarim uchun plan</i>
+  • <i>1 mln ovqat uchun reja</i>
+  • <i>Transport 800 ming limit</i>
+
+<b>🧾 Chek qo'shish:</b>
+Chek rasmini izoh bilan birga yuboring. Masalan: <i>78 ming market</i>
+
+<b>ℹ️ Eslatma:</b>
+Qarz berilganda balans darhol o'zgarmaydi. Qarz qaytganda yoki qaytarganingizda qarz yozuvi yangilanadi va mos ravishda hisobga olinadi.`;
 
 const DEFAULT_RATE = 12200;
 const ADMIN_IDS = new Set((process.env.ADMIN_IDS || '').split(',').map(v => v.trim()).filter(Boolean));
@@ -88,6 +103,8 @@ const numFmt = n => Number(n || 0).toLocaleString('ru-RU');
 const isAdmin = userId => ADMIN_IDS.has(String(userId));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let txSourceColumnSupported = null;
+let txSourceRefColumnSupported = null;
+let debtSettlementColumnSupported = null;
 
 function fmtDateTime(v) {
   if (!v) return '—';
@@ -232,20 +249,36 @@ async function sendCategoryLimitAlert(userId, chatId, category, latestAmount, tx
 async function insertTransactions(rows, source = 'bot') {
   const payload = (rows || []).map(row => ({ ...row }));
 
-  if (txSourceColumnSupported !== false) {
-    const withSource = payload.map(row => ({ ...row, source }));
-    const res = await db.from('transactions').insert(withSource).select();
+  if (txSourceColumnSupported !== false || txSourceRefColumnSupported !== false) {
+    const enriched = payload.map(row => {
+      const next = { ...row };
+      if (txSourceColumnSupported !== false) next.source = source;
+      if (txSourceRefColumnSupported !== false && row.source_ref) next.source_ref = row.source_ref;
+      return next;
+    });
+
+    const res = await db.from('transactions').insert(enriched).select();
     if (!res.error) {
-      txSourceColumnSupported = true;
+      if (txSourceColumnSupported !== false) txSourceColumnSupported = true;
+      if (payload.some(row => row.source_ref)) txSourceRefColumnSupported = true;
       return res;
     }
-    if (!isMissingColumnError(res.error, 'source')) {
-      return res;
+
+    if (isMissingColumnError(res.error, 'source_ref')) {
+      txSourceRefColumnSupported = false;
+      return insertTransactions(rows, source);
     }
-    txSourceColumnSupported = false;
+
+    if (isMissingColumnError(res.error, 'source')) {
+      txSourceColumnSupported = false;
+      return insertTransactions(rows, source);
+    }
+
+    return res;
   }
 
-  return db.from('transactions').insert(payload).select();
+  const plain = payload.map(({ source_ref, ...rest }) => ({ ...rest }));
+  return db.from('transactions').insert(plain).select();
 }
 
 function adminPanelMarkup() {
@@ -519,7 +552,8 @@ const CATEGORY_ALIASES = {
     Transport: ['taksi', 'taxi', 'yandex', 'metro', 'bus', 'benzin', 'zapravka', "yo'l", 'transport'],
     Ovqat: ['ovqat', 'osh', 'tushlik', 'kechki ovqat', 'non', 'market', 'korzinka', 'taom', 'kafe', 'fastfood', 'choyxona'],
     Kvartira: ['ijara', 'kvartira', 'uy', 'kommunal', 'svet', 'gaz', 'suv', 'internet', 'wifi', 'arenda'],
-    Kredit: ['kredit', 'bank', 'tolov', "to'lov", 'uzum', 'nasiya', 'qarz', 'loan'],
+    Kredit: ['kredit', 'bank', 'tolov', "to'lov", 'uzum'],
+    Qarz: ['qarz', 'nasiya', 'loan', 'qarzdorlik'],
     "Sog'liq": ['dori', 'apteka', 'klinika', 'shifoxona', 'stomatolog', "sog'liq"],
     Aloqa: ['telefon', 'nomer', 'aloqa', 'sim', 'megabayt', 'internet paket'],
     "Ko'ngilochar": ['kino', 'oyin', "o'yin", 'game', 'subscription', 'netflix', 'spotify'],
@@ -760,6 +794,40 @@ function cleanupCategoryText(value) {
   return cleaned;
 }
 
+function stripAmountFragment(text, amountMeta) {
+  return String(text || '').replace(amountMeta?.rawMatch || '', ' ');
+}
+
+function cleanupIntentName(value) {
+  return titleCaseWords(String(value || '')
+    .replace(/\b(?:uchun|ga|ka|qa|dan|ni|pul|summa|bo'?yicha|oylik|oyiga|joriy|shu|oy|plan|reja|limit|byudjet|budjet)\b/gi, ' ')
+    .replace(/[.,!?;:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim());
+}
+
+function cleanupPersonName(value) {
+  return titleCaseWords(String(value || '')
+    .replace(/\b(?:men|menga|meni|mendan|biz|bizga|bizni|u|unga|undan|undanam|pul|summa|uchun|bilan|qilgan|qilib|qaytarib|berib|oldim|berdim|oldi|berdi|qaytardi|qaytdi|qaytardim|qaytarildi|to'?ladim|uzdim|qarz|nasiya|qarzni|kerak|bo'?lgan|boyicha)\b/gi, ' ')
+    .replace(/[.,!?;:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim());
+}
+
+function extractNameBySuffix(text, suffix) {
+  const safe = String(text || '').trim();
+  if (!safe) return '';
+  const re = new RegExp(`([\\p{L}0-9'’\\s-]{2,}?)(?:${suffix})\\b`, 'iu');
+  const match = safe.match(re);
+  if (!match?.[1]) return '';
+  return cleanupPersonName(match[1]);
+}
+
+function extractLooseName(text) {
+  return cleanupPersonName(String(text || '')
+    .replace(/\b(?:qaytdi|qaytardi|qaytardim|qaytarildi|qaytarib berdi|qaytarib berdim|to'?ladim|uzdim|berdim|oldim|qarz|nasiya)\b/gi, ' '));
+}
+
 function parsePlanIntent(raw) {
   const text = String(raw || '').trim();
   if (!text || !/\b(?:reja|plan|limit|byudjet|budjet)\b/i.test(text)) return null;
@@ -767,9 +835,11 @@ function parsePlanIntent(raw) {
   const amountMeta = extractAmountMeta(text);
   if (!amountMeta) return null;
 
-  const cleaned = cleanupCategoryText(String(text)
-    .replace(amountMeta.rawMatch, ' ')
-    .replace(/\b(?:reja|plan|limit|byudjet|budjet|oylik|oyiga|kerak|qilib qo'y|qilib qoy|qilib ber|tuzib ber|tuzib qo'y|tuzib qoy|tuz|tuzing)\b/gi, ' '));
+  const noPrimaryAmount = stripAmountFragment(text, amountMeta);
+  const alertMeta = /\b(?:qolganda|ogohlantir|ogohlantirgin|ogohlantirish)\b/i.test(text) ? extractAmountMeta(noPrimaryAmount) : null;
+  const cleaned = cleanupCategoryText(String(noPrimaryAmount)
+    .replace(alertMeta?.rawMatch || '', ' ')
+    .replace(/\b(?:reja|plan|limit|byudjet|budjet|oylik|oyiga|kerak|qilib qo'y|qilib qoy|qilib ber|tuzib ber|tuzib qo'y|tuzib qoy|tuz|tuzing|ogohlantir|ogohlantirgin|ogohlantirish|qolganda)\b/gi, ' '));
 
   let categoryName = '';
   const beforeUchun = cleaned.match(/(.+?)\s+uchun\b/i);
@@ -780,13 +850,13 @@ function parsePlanIntent(raw) {
   }
   if (!categoryName) categoryName = cleaned;
 
-  categoryName = titleCaseWords(categoryName.replace(/\b(?:uchun|oy|oylik|oyiga)\b/gi, ' ').replace(/\s+/g, ' ').trim());
+  categoryName = cleanupIntentName(categoryName);
   if (!categoryName) return null;
 
   return {
     amount: amountMeta.amount,
     categoryName,
-    alertBefore: Math.round(amountMeta.amount * 0.1),
+    alertBefore: Math.max(0, alertMeta?.amount || Math.round(amountMeta.amount * 0.1)),
     monthKey: monthKeyOf(),
   };
 }
@@ -799,31 +869,67 @@ function parseDebtIntent(raw) {
   const amountMeta = extractAmountMeta(text);
   if (!amountMeta) return null;
 
-  let direction = null;
-  if (/\b(?:qarz|nasiya)\b.*\b(?:berdim|berib turdim|yozib berdim)\b/i.test(lower) || /\bga\b.*\b(?:qarz|nasiya)\b.*\b(?:berdim|berib turdim)\b/i.test(lower)) {
-    direction = 'receivable';
-  } else if (/\b(?:qarz|nasiya)\b.*\b(?:oldim|olib turdim)\b/i.test(lower) || /\bdan\b.*\b(?:qarz|nasiya)\b.*\b(?:oldim|olib turdim)\b/i.test(lower)) {
-    direction = 'payable';
-  }
+  const noAmount = stripAmountFragment(text, amountMeta);
+  const hasGiveVerb = /\b(?:berdim|berib turdim|yozib berdim|beraman)\b/i.test(lower);
+  const hasTakeVerb = /\b(?:oldim|olib turdim|olaman)\b/i.test(lower);
+  const hasGa = /[\p{L}0-9'’`\-]+ga\b/iu.test(noAmount);
+  const hasDan = /[\p{L}0-9'’`\-]+dan\b/iu.test(noAmount);
 
+  let direction = null;
+  if (hasGa || hasGiveVerb) direction = 'receivable';
+  if (!direction && (hasDan || hasTakeVerb)) direction = 'payable';
   if (!direction) return null;
 
-  let personName = '';
-  if (direction === 'receivable') {
-    const m = text.match(/([\p{L}0-9'’`\-\s]{2,}?)\s+ga\b/iu);
-    if (m?.[1]) personName = m[1];
-  } else {
-    const m = text.match(/([\p{L}0-9'’`\-\s]{2,}?)\s+dan\b/iu);
-    if (m?.[1]) personName = m[1];
-  }
+  let personName = direction === 'receivable'
+    ? extractNameBySuffix(noAmount, 'ga')
+    : extractNameBySuffix(noAmount, 'dan');
 
-  personName = titleCaseWords(personName.replace(amountMeta.rawMatch, ' ').replace(/\b(?:qarz|nasiya|berdim|oldim|berib turdim|olib turdim)\b/gi, ' ').trim());
+  if (!personName) personName = extractLooseName(noAmount);
   if (!personName) return null;
 
   return {
     amount: amountMeta.amount,
     personName,
     direction,
+    note: text,
+  };
+}
+
+function parseDebtSettlementIntent(raw) {
+  const text = String(raw || '').trim();
+  const lower = text.toLowerCase();
+  if (!text) return null;
+
+  const amountMeta = extractAmountMeta(text);
+  const noAmount = stripAmountFragment(text, amountMeta);
+  const hasReturnVerb = /\b(?:qaytdi|qaytardi|qaytardim|qaytarildi|qaytarib berdi|qaytarib berdim|uzdim|uzildi|to'?ladim)\b/i.test(lower);
+  const hasDebtHint = /\b(?:qarz|nasiya)\b/i.test(lower);
+  if (hasDebtHint && !hasReturnVerb) return null;
+  const hasGa = /[\p{L}0-9'’`\-]+ga\b/iu.test(noAmount);
+  const hasDan = /[\p{L}0-9'’`\-]+dan\b/iu.test(noAmount);
+
+  let direction = null;
+  if (/\b(?:qaytardi|qaytdi|qaytarildi|qaytarib berdi)\b/i.test(lower)) direction = 'receivable';
+  if (!direction && /\b(?:qaytardim|qaytarib berdim|uzdim|to'?ladim)\b/i.test(lower)) direction = 'payable';
+  if (!direction && hasDan) direction = 'receivable';
+  if (!direction && hasGa) direction = 'payable';
+  if (!direction) return null;
+
+  let personName = direction === 'receivable'
+    ? extractNameBySuffix(noAmount, 'dan')
+    : extractNameBySuffix(noAmount, 'ga');
+
+  if (!personName) personName = extractLooseName(noAmount);
+  if (!personName) return null;
+
+  const explicit = hasReturnVerb || hasDebtHint;
+  if (!explicit && !amountMeta) return null;
+
+  return {
+    amount: amountMeta?.amount || null,
+    personName,
+    direction,
+    explicit,
     note: text,
   };
 }
@@ -905,6 +1011,84 @@ async function savePlanIntent(userId, chatId, intent) {
   return true;
 }
 
+function pickBestDebtMatch(rows, personName) {
+  const target = normalizeTextForMatch(personName);
+  let best = null;
+  let bestScore = 0;
+
+  for (const row of rows || []) {
+    const candidate = normalizeTextForMatch(row.person_name);
+    if (!candidate) continue;
+    let score = 0;
+    if (candidate === target) score = 100;
+    else if (candidate.includes(target) || target.includes(candidate)) score = 70;
+    else {
+      const targetWords = new Set(target.split(' ').filter(Boolean));
+      const candidateWords = candidate.split(' ').filter(Boolean);
+      score = candidateWords.reduce((sum, word) => sum + (targetWords.has(word) ? 25 : 0), 0);
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = row;
+    }
+  }
+
+  return bestScore >= 25 ? best : null;
+}
+
+async function findOpenDebtByPerson(userId, personName, direction) {
+  const { data, error } = await db
+    .from('debts')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'open')
+    .eq('direction', direction)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return pickBestDebtMatch(data || [], personName);
+}
+
+async function updateDebtSettlementMeta(debtId, userId, values) {
+  if (debtSettlementColumnSupported === false) {
+    const { settlement_tx_id, ...plain } = values || {};
+    return db.from('debts').update(plain).eq('id', debtId).eq('user_id', userId);
+  }
+
+  const res = await db.from('debts').update(values).eq('id', debtId).eq('user_id', userId);
+  if (!res.error) {
+    debtSettlementColumnSupported = true;
+    return res;
+  }
+
+  if (isMissingColumnError(res.error, 'settlement_tx_id')) {
+    debtSettlementColumnSupported = false;
+    const { settlement_tx_id, ...plain } = values || {};
+    return db.from('debts').update(plain).eq('id', debtId).eq('user_id', userId);
+  }
+
+  return res;
+}
+
+async function createDebtSettlementTx(userId, debt, amount) {
+  const category = debt.direction === 'receivable'
+    ? `Qarz qaytdi · ${debt.person_name}`
+    : `Qarz qaytarildi · ${debt.person_name}`;
+  const sourceRef = `debt:${debt.id}:${Date.now()}`;
+  const row = {
+    user_id: userId,
+    amount,
+    category,
+    type: debt.direction === 'receivable' ? 'income' : 'expense',
+    date: iso(),
+    source_ref: sourceRef,
+  };
+
+  const { data, error } = await insertTransactions([row], 'debt_settlement');
+  if (error) throw error;
+  const saved = Array.isArray(data) ? data[0] : data;
+  return saved || null;
+}
+
 async function saveDebtIntent(userId, chatId, intent) {
   const payload = {
     user_id: userId,
@@ -922,11 +1106,80 @@ async function saveDebtIntent(userId, chatId, intent) {
 
   const directionText = intent.direction === 'receivable' ? 'Sizga qaytadi' : 'Siz qaytarasiz';
   await bot.sendMessage(chatId,
-    `🤝 <b>Qarz saqlandi</b>\n\n👤 Kim bilan: <b>${esc(intent.personName)}</b>\n💰 Summa: <b>${numFmt(intent.amount)} so'm</b>\n📌 Yo'nalish: <b>${esc(directionText)}</b>\n\nMuddat va eslatmani Mini App > Qarzlar bo'limidan belgilashingiz mumkin.`,
+    `🤝 <b>Qarz saqlandi</b>
+
+📂 <b>Turi:</b> Qarz
+👤 <b>Kim bilan:</b> <b>${esc(intent.personName)}</b>
+💰 <b>Summa:</b> <b>${numFmt(intent.amount)} so'm</b>
+📌 <b>Yo'nalish:</b> <b>${esc(directionText)}</b>
+
+<i>Eslatma: qarz berilganda balans darhol o'zgarmaydi. Qarz qaytganda yoki qaytarganingizda bot avtomatik hisobga oladi.</i>`,
     { parse_mode: 'HTML' }
   ).catch(() => null);
   return true;
 }
+
+async function saveDebtSettlementIntent(userId, chatId, intent) {
+  const debt = await findOpenDebtByPerson(userId, intent.personName, intent.direction);
+  if (!debt) {
+    if (intent.explicit) {
+      await bot.sendMessage(chatId,
+        `⚠️ <b>Ochiq qarz topilmadi</b>
+
+👤 <b>${esc(intent.personName)}</b> uchun ochiq qarz yozuvi topilmadi. Avval qarzni yozing yoki Mini App > Qarzlar bo'limidan tekshiring.`,
+        { parse_mode: 'HTML' }
+      ).catch(() => null);
+      return { handled: true, found: false };
+    }
+    return { handled: false, found: false };
+  }
+
+  const currentAmount = Number(debt.amount || 0);
+  const paidAmount = Math.max(0, Number(intent.amount || currentAmount));
+  if (!paidAmount) return { handled: false, found: true };
+
+  const usedAmount = Math.min(currentAmount, paidAmount);
+  const remaining = Math.max(0, currentAmount - usedAmount);
+  const tx = await createDebtSettlementTx(userId, debt, usedAmount);
+
+  if (remaining > 0) {
+    const { error } = await updateDebtSettlementMeta(debt.id, userId, {
+      amount: remaining,
+      updated_at: iso(),
+    });
+    if (error) throw error;
+
+    await bot.sendMessage(chatId,
+      `🔁 <b>Qarz qisman yopildi</b>
+
+👤 <b>${esc(debt.person_name)}</b>
+💸 <b>${numFmt(usedAmount)} so'm</b> ${debt.direction === 'receivable' ? 'qaytdi' : 'qaytarildi'}
+💼 <b>Qoldiq qarz:</b> <b>${numFmt(remaining)} so'm</b>`,
+      { parse_mode: 'HTML' }
+    ).catch(() => null);
+
+    return { handled: true, found: true, debtId: debt.id, txId: tx?.id || null, partial: true };
+  }
+
+  const { error } = await updateDebtSettlementMeta(debt.id, userId, {
+    status: 'paid',
+    paid_at: iso(),
+    settlement_tx_id: tx?.id || null,
+    updated_at: iso(),
+  });
+  if (error) throw error;
+
+  await bot.sendMessage(chatId,
+    `✅ <b>Qarz yopildi</b>
+
+👤 <b>${esc(debt.person_name)}</b>
+💰 <b>${numFmt(usedAmount)} so'm</b> ${debt.direction === 'receivable' ? "qaytdi va balansga qo'shildi" : "qaytarildi va balansdan chiqarildi"}.`,
+    { parse_mode: 'HTML' }
+  ).catch(() => null);
+
+  return { handled: true, found: true, debtId: debt.id, txId: tx?.id || null, partial: false };
+}
+
 
 // ─── TEXT PARSER ──────────────────────────────────────────
 // Matndan summa, tur va kategoriyani ajratib olish (Regex asosslangan fallback)
@@ -1516,8 +1769,20 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // ── Aqlli intentlar: reja va qarz ──
+    // ── Aqlli intentlar: qarz qaytishi, qarz yaratish va reja ──
     if (text) {
+      const debtSettlementIntent = parseDebtSettlementIntent(text);
+      if (debtSettlementIntent) {
+        try {
+          const result = await saveDebtSettlementIntent(userId, chatId, debtSettlementIntent);
+          if (result?.handled) return res.status(200).json({ ok: true });
+        } catch (error) {
+          logErr('debt-settlement-intent', error, { userId, text });
+          await bot.sendMessage(chatId, `⚠️ Qarz qaytishini qayta ishlashda xatolik: ${esc(error.message || "noma'lum")}`, { parse_mode: 'HTML' }).catch(() => null);
+          return res.status(200).json({ ok: true });
+        }
+      }
+
       const debtIntent = parseDebtIntent(text);
       if (debtIntent) {
         try {

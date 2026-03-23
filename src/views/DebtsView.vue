@@ -86,7 +86,7 @@
       <div class="panel-head-inline debt-panel-head">
         <div>
           <div class="panel-ttl" data-i18n="debts_list_title">Qarzlar ro'yxati</div>
-          <div class="panel-head-sub">Bugungi va yaqinlashayotgan qarzlarni qulay boshqaring.</div>
+          <div class="panel-head-sub">Ro'yxatda faqat ism va summa ko'rinadi, ustiga bossangiz to'liq ma'lumot ochiladi.</div>
         </div>
         <div class="panel-head-meta" id="debt-list-meta">0 yozuv</div>
       </div>

@@ -4238,6 +4238,79 @@ body {
     gap: 12px;
 }
 
+.debt-card-collapsible {
+    padding: 0;
+    overflow: hidden;
+}
+
+.debt-card-summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 16px;
+    display: grid;
+    gap: 10px;
+}
+
+.debt-card-summary::-webkit-details-marker {
+    display: none;
+}
+
+.debt-card-summary-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.debt-card-summary-tail {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.debt-card-chevron {
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 900;
+    transition: transform .2s ease;
+}
+
+.debt-card-collapsible[open] .debt-card-chevron {
+    transform: rotate(180deg);
+}
+
+.debt-card-summary-sub {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.debt-summary-meta {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--muted);
+}
+
+.debt-summary-meta.warn {
+    color: #f7c76f;
+}
+
+.debt-summary-meta.good {
+    color: #23d6a0;
+}
+
+.debt-summary-meta.danger {
+    color: #ff5d7c;
+}
+
+.debt-card-details {
+    padding: 0 16px 16px;
+    display: grid;
+    gap: 12px;
+    border-top: 1px solid rgba(255,255,255,.06);
+}
+
 .debt-card.is-overdue {
     border-color: rgba(255, 88, 117, 0.22);
     box-shadow: 0 16px 34px rgba(87, 15, 27, 0.22);
@@ -4434,16 +4507,39 @@ body {
 
     .debt-card-top,
     .debt-spotlight,
-    .debt-panel-head {
+    .debt-panel-head,
+    .debt-card-summary-main,
+    .plan-progress-head {
         grid-template-columns: 1fr;
         display: grid;
     }
 
-    .debt-card-amount {
+    .debt-card-amount,
+    .plan-progress-head span {
         text-align: left;
     }
 }
 /* ===== v1.2.3 mobile full-screen modals + compact plans ===== */
+.plan-progress-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 2px;
+}
+
+.plan-progress-head strong {
+    font-size: 12px;
+    font-weight: 900;
+    color: var(--text);
+}
+
+.plan-progress-head span {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: right;
+}
+
 .plan-stats.compact {
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }

@@ -203,12 +203,12 @@
       const next = getPlanStats(plan);
       const prev = planNotifyState.get(plan.id);
       if (planAppNotifyReady && prev) {
-        const crossedAlert = prev.remaining > Number(plan.alert_before || 0) && next.remaining <= Number(plan.alert_before || 0) && !next.exceeded;
-        const crossedLimit = !prev.exceeded && next.exceeded;
-        if (crossedLimit) showErr(`${plan.category_name}: limit tugadi ⚠️`, 3200);
+        const crossedAlert = prev.remaining > Number(plan.alert_before || 0) && next.remaining <= Number(plan.alert_before || 0) && !next.completed;
+        const crossedLimit = !prev.completed && next.completed;
+        if (crossedLimit) showErr(`${plan.category_name}: reja to'ldi ⚠️`, 3200);
         else if (crossedAlert && Number(plan.alert_before || 0) > 0) showErr(`${plan.category_name}: ${fmtMoney(next.remaining)} qoldi`, 3200);
       }
-      planNotifyState.set(plan.id, { remaining: next.remaining, exceeded: next.exceeded });
+      planNotifyState.set(plan.id, { remaining: next.remaining, exceeded: next.exceeded, completed: next.completed });
       seen.add(plan.id);
     }
 
@@ -592,44 +592,47 @@
       ? (currentLang === 'ru' ? 'Вам должны вернуть долг' : currentLang === 'en' ? 'They should pay you back' : "Sizga qaytarilishi kerak")
       : (currentLang === 'ru' ? 'Вы должны вернуть долг' : currentLang === 'en' ? 'You should pay it back' : "Siz qaytarishingiz kerak"));
     return `
-      <article class="debt-card ${due.isOverdue ? 'is-overdue' : ''} ${item.status === 'paid' ? 'is-paid' : ''}">
-        <div class="debt-card-top">
-          <div class="debt-card-person-wrap">
+      <details class="debt-card debt-card-collapsible ${due.isOverdue ? 'is-overdue' : ''} ${item.status === 'paid' ? 'is-paid' : ''}">
+        <summary class="debt-card-summary">
+          <div class="debt-card-summary-main">
             <div class="debt-card-person">${escapeHtml(item.person_name || '—')}</div>
-            <div class="debt-card-note">${escapeHtml(noteText)}</div>
+            <div class="debt-card-summary-tail"><div class="debt-card-amount ${amountClass}">${fmtMoney(item.amount)}</div><div class="debt-card-chevron">⌄</div></div>
           </div>
-          <div class="debt-card-amount ${amountClass}">${fmtMoney(item.amount)}</div>
+        </summary>
+
+        <div class="debt-card-details">
+          <div class="debt-card-note">${escapeHtml(noteText)}</div>
+          <div class="debt-card-meta-grid">
+            <div class="debt-glance-item">
+              <span>${currentLang === 'ru' ? 'Тип' : currentLang === 'en' ? 'Type' : 'Turi'}</span>
+              <strong>${escapeHtml(debtDirectionLabel(item.direction))}</strong>
+            </div>
+            <div class="debt-glance-item">
+              <span>${currentLang === 'ru' ? 'Срок' : currentLang === 'en' ? 'Due' : 'Muddat'}</span>
+              <strong>${escapeHtml(due.target ? fmtDateTimeShort(due.target) : '—')}</strong>
+            </div>
+            <div class="debt-glance-item">
+              <span>${currentLang === 'ru' ? 'Qolgan vaqt' : currentLang === 'en' ? 'Time left' : 'Qolgan vaqt'}</span>
+              <strong>${escapeHtml(debtRelativeLabel(item))}</strong>
+            </div>
+            <div class="debt-glance-item">
+              <span>${currentLang === 'ru' ? 'Напоминание' : currentLang === 'en' ? 'Reminder' : 'Eslatma'}</span>
+              <strong>${escapeHtml(debtReminderLabel(item))}</strong>
+            </div>
+          </div>
+          <div class="route-badges debt-card-badges">
+            <span class="route-badge ${directionClass}">${escapeHtml(debtDirectionLabel(item.direction))}</span>
+            <span class="route-badge ${statusClass}">${due.isOverdue ? "Muddati o'tgan" : escapeHtml(debtStatusLabel(item.status))}</span>
+          </div>
+          <div class="debt-card-actions">
+            ${item.status === 'open'
+              ? `<button class="route-action primary" onclick="event.stopPropagation(); markDebtPaid(${item.id})">✅ ${currentLang === 'ru' ? 'Qaytdi' : currentLang === 'en' ? 'Paid back' : 'Qaytdi'}</button>`
+              : `<button class="route-action" onclick="event.stopPropagation(); reopenDebt(${item.id})">↺ ${currentLang === 'ru' ? 'Qayta ochish' : currentLang === 'en' ? 'Reopen' : 'Qayta ochish'}</button>`}
+            <button class="route-action" onclick="event.stopPropagation(); openDebtForm(${item.id})">✏️ ${currentLang === 'ru' ? 'Изменить' : currentLang === 'en' ? 'Edit' : 'Tahrirlash'}</button>
+            <button class="route-action danger" onclick="event.stopPropagation(); deleteDebt(${item.id})">🗑 ${currentLang === 'ru' ? 'Удалить' : currentLang === 'en' ? 'Delete' : "O'chirish"}</button>
+          </div>
         </div>
-        <div class="debt-card-meta-grid">
-          <div class="debt-glance-item">
-            <span>${currentLang === 'ru' ? 'Тип' : currentLang === 'en' ? 'Type' : 'Turi'}</span>
-            <strong>${escapeHtml(debtDirectionLabel(item.direction))}</strong>
-          </div>
-          <div class="debt-glance-item">
-            <span>${currentLang === 'ru' ? 'Срок' : currentLang === 'en' ? 'Due' : 'Muddat'}</span>
-            <strong>${escapeHtml(due.target ? fmtDateTimeShort(due.target) : '—')}</strong>
-          </div>
-          <div class="debt-glance-item">
-            <span>${currentLang === 'ru' ? 'Qolgan vaqt' : currentLang === 'en' ? 'Time left' : 'Qolgan vaqt'}</span>
-            <strong>${escapeHtml(debtRelativeLabel(item))}</strong>
-          </div>
-          <div class="debt-glance-item">
-            <span>${currentLang === 'ru' ? 'Напоминание' : currentLang === 'en' ? 'Reminder' : 'Eslatma'}</span>
-            <strong>${escapeHtml(debtReminderLabel(item))}</strong>
-          </div>
-        </div>
-        <div class="route-badges debt-card-badges">
-          <span class="route-badge ${directionClass}">${escapeHtml(debtDirectionLabel(item.direction))}</span>
-          <span class="route-badge ${statusClass}">${due.isOverdue ? "Muddati o'tgan" : escapeHtml(debtStatusLabel(item.status))}</span>
-        </div>
-        <div class="debt-card-actions">
-          ${item.status === 'open'
-            ? `<button class="route-action primary" onclick="markDebtPaid(${item.id})">✅ ${currentLang === 'ru' ? 'Qaytdi' : currentLang === 'en' ? 'Paid back' : 'Qaytdi'}</button>`
-            : `<button class="route-action" onclick="reopenDebt(${item.id})">↺ ${currentLang === 'ru' ? 'Qayta ochish' : currentLang === 'en' ? 'Reopen' : 'Qayta ochish'}</button>`}
-          <button class="route-action" onclick="openDebtForm(${item.id})">✏️ ${currentLang === 'ru' ? 'Изменить' : currentLang === 'en' ? 'Edit' : 'Tahrirlash'}</button>
-          <button class="route-action danger" onclick="deleteDebt(${item.id})">🗑 ${currentLang === 'ru' ? 'Удалить' : currentLang === 'en' ? 'Delete' : "O'chirish"}</button>
-        </div>
-      </article>`;
+      </details>`;
   }
 
   function renderDebts() {
@@ -916,14 +919,18 @@
 
   function getPlanStats(plan) {
     const targetMonth = plan.month_key || monthKey();
+    const budget = Number(plan.amount || 0);
     const spent = txList
       .filter(tx => tx.type === 'expense')
       .filter(tx => monthKey(tx.ms) === targetMonth)
       .filter(tx => baseCategoryName(tx.category) === plan.category_name)
       .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
-    const remaining = Math.max(0, Number(plan.amount || 0) - spent);
-    const percent = plan.amount > 0 ? Math.min(100, Math.round((spent / plan.amount) * 100)) : 0;
-    return { spent, remaining, percent, exceeded: spent > plan.amount, near: !spent ? false : remaining <= Number(plan.alert_before || 0) };
+    const remaining = Math.max(0, budget - spent);
+    const percent = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+    const completed = budget > 0 && spent >= budget;
+    const exceeded = budget > 0 && spent > budget;
+    const overBy = Math.max(0, spent - budget);
+    return { spent, remaining, percent, completed, exceeded, overBy, near: budget > 0 ? remaining <= Number(plan.alert_before || 0) && !completed : false };
   }
 
   window.setPlanFilter = function setPlanFilter(mode = 'all') {
@@ -966,10 +973,18 @@
       const stats = getPlanStats(plan);
       const statusText = stats.exceeded
         ? (currentLang === 'ru' ? 'Limitdan oshgan' : currentLang === 'en' ? 'Limit exceeded' : 'Limitdan oshgan')
-        : stats.near
-          ? (currentLang === 'ru' ? 'Ogohlantirish' : currentLang === 'en' ? 'Alert threshold' : 'Ogohlantirish')
-          : (currentLang === 'ru' ? 'Nazorat ostida' : currentLang === 'en' ? 'On track' : 'Nazorat ostida');
-      const statusClass = stats.exceeded ? 'danger' : (stats.near ? 'warn' : 'good');
+        : stats.completed
+          ? (currentLang === 'ru' ? "To'ldi" : currentLang === 'en' ? 'Completed' : "To'ldi")
+          : stats.near
+            ? (currentLang === 'ru' ? 'Ogohlantirish' : currentLang === 'en' ? 'Alert threshold' : 'Ogohlantirish')
+            : (currentLang === 'ru' ? 'Nazorat ostida' : currentLang === 'en' ? 'On track' : 'Nazorat ostida');
+      const statusClass = stats.exceeded ? 'danger' : (stats.completed ? 'accent' : (stats.near ? 'warn' : 'good'));
+      const helperText = stats.exceeded
+        ? `${fmtMoney(stats.overBy)} oshib ketdi`
+        : stats.completed
+          ? `Reja to'ldi • ${fmtMoney(stats.spent)} sarflandi`
+          : `${fmtMoney(stats.remaining)} qoldi`;
+      const percentText = stats.completed ? `100% to'ldi` : `${stats.percent}% to'ldi`;
       return `
         <div class="route-item plan-route-item ${stats.exceeded ? 'plan-route-item-danger' : ''}">
           <div class="route-item-top">
@@ -979,10 +994,14 @@
             </div>
             <div class="route-item-amount">${fmtMoney(plan.amount)}</div>
           </div>
+          <div class="plan-progress-head">
+            <strong>${escapeHtml(percentText)}</strong>
+            <span>${escapeHtml(helperText)}</span>
+          </div>
           <div class="plan-progress"><span style="width:${Math.min(100, stats.percent)}%"></span></div>
           <div class="plan-stats compact">
             <div class="plan-stat"><span class="plan-stat-label">Sarflandi</span><span class="plan-stat-value">${fmtMoney(stats.spent)}</span></div>
-            <div class="plan-stat"><span class="plan-stat-label">Qoldi</span><span class="plan-stat-value">${fmtMoney(stats.remaining)}</span></div>
+            <div class="plan-stat"><span class="plan-stat-label">Qoldi</span><span class="plan-stat-value">${stats.exceeded ? fmtMoney(stats.overBy) : fmtMoney(stats.remaining)}</span></div>
             <div class="plan-stat"><span class="plan-stat-label">Ogohlantirish</span><span class="plan-stat-value">${fmtMoney(plan.alert_before)}</span></div>
           </div>
           <div class="route-badges">
@@ -1024,7 +1043,7 @@
     const cat = (cats.expense || []).find(item => String(item.id || '') === String(categoryId));
     const category_name = cat?.name || '';
     const amount = Math.round(getCleanAmount($('plan-amount').value || ''));
-    const alert_before = Math.round(getCleanAmount($('plan-alert-before').value || ''));
+    const alert_before = Math.round(getCleanAmount($('plan-alert-before').value || '')) || Math.round(amount * 0.1);
     const notify_bot = !!$('plan-notify-bot').checked;
     const notify_app = !!$('plan-notify-app').checked;
     const is_active = $('plan-is-active') ? !!$('plan-is-active').checked : true;
