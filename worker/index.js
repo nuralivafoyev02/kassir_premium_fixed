@@ -1186,7 +1186,7 @@ async function processDebtReminders(env, now = new Date(), meta = {}) {
         });
         try {
           await sbReleaseDebtReminder(env, debt, nowIso);
-        } catch (_) {}
+        } catch (_) { }
         await sbInsertNotificationLog(env, {
           setting_key: "debt_reminder",
           user_id: debt.user_id,
@@ -1264,6 +1264,12 @@ function seedLegacyProcessEnv(env) {
     "BOT_WEBHOOK_SECRET",
     "WEBHOOK_SECRET",
     "WEBAPP_URL",
+    "LOG_CHANNEL_ID",
+    "TELEGRAM_LOGGING_ENABLED",
+    "LOG_LEVEL",
+    "LOCAL_LOG_LEVEL",
+    "ADMIN_NOTIFY_CHAT_ID",
+    "CLIENT_CONSOLE_LOGS_ENABLED",
   ];
 
   for (const key of keys) {
@@ -1531,7 +1537,7 @@ async function handleNotifyMiniAppTx(request, env) {
       scope: "notify-miniapp-tx",
       message: error?.message || String(error),
       payload: { error },
-    }).catch(() => {});
+    }).catch(() => { });
     return json(
       {
         ok: false,
@@ -1590,7 +1596,7 @@ async function handleScheduleNotification(request, env) {
       scope: "notifications.schedule",
       message: error?.message || String(error),
       payload: { error },
-    }).catch(() => {});
+    }).catch(() => { });
     return json(
       {
         ok: false,
@@ -1616,7 +1622,7 @@ async function handleListDueNotifications(request, env) {
       scope: "notifications.due",
       message: error?.message || String(error),
       payload: { error },
-    }).catch(() => {});
+    }).catch(() => { });
     return json(
       {
         ok: false,
@@ -1654,7 +1660,7 @@ async function handleTestNotification(request, env) {
       user_id: body.user_id || body.userId || null,
       message: error?.message || String(error),
       payload: { error },
-    }).catch(() => {});
+    }).catch(() => { });
     return json(
       {
         ok: false,
@@ -1692,13 +1698,13 @@ async function handleManualCronRun(request, env) {
         scope: "cron.manual",
         message: "Manual cron xatolar bilan yakunlandi",
         payload: result,
-      }).catch(() => {});
+      }).catch(() => { });
     } else if (totalSent > 0) {
       await getWorkerLogger(env).success({
         scope: "cron.manual",
         message: "Manual cron muvaffaqiyatli yakunlandi",
         payload: result,
-      }).catch(() => {});
+      }).catch(() => { });
     }
     return json(result);
   } catch (error) {
@@ -1706,7 +1712,7 @@ async function handleManualCronRun(request, env) {
       scope: "cron.manual",
       message: error?.message || String(error),
       payload: { error },
-    }).catch(() => {});
+    }).catch(() => { });
     return json(
       {
         ok: false,
