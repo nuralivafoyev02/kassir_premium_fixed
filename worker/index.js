@@ -1,3 +1,7 @@
+import telegramOpsPkg from "../lib/telegram-ops.cjs";
+
+const { createTelegramOps } = telegramOpsPkg;
+
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -75,6 +79,35 @@ function buildAppConfig(env) {
 
 function buildTgApiUrl(env, method) {
   return `https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`;
+}
+
+function parseBoolean(value, fallback = false) {
+  if (value == null || value === "") return fallback;
+  const raw = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  return fallback;
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+function getWorkerLogger(env) {
+  return createTelegramOps({
+    botToken: env?.BOT_TOKEN,
+    logChannelId: env?.LOG_CHANNEL_ID,
+    adminChatId: firstNonEmpty(env?.ADMIN_NOTIFY_CHAT_ID, env?.OWNER_ID),
+    loggingEnabled: env?.TELEGRAM_LOGGING_ENABLED,
+    logLevel: env?.LOG_LEVEL,
+    localLevel: env?.LOCAL_LOG_LEVEL || "ERROR",
+    source: "WORKER",
+    fetchImpl: fetch,
+  });
 }
 
 async function tgCall(env, method, payload) {
@@ -1439,9 +1472,11 @@ async function handleDebugTelegram(env) {
   }
 }
 
-async function handleClientLog(request) {
+async function handleClientLog(request, env) {
   const body = await safeJson(request);
-  console.log("[client-log]", body);
+  if (parseBoolean(env?.CLIENT_CONSOLE_LOGS_ENABLED, false)) {
+    getWorkerLogger(env).local("INFO", "client-log", body);
+  }
   return json({ ok: true });
 }
 
@@ -1492,7 +1527,11 @@ async function handleNotifyMiniAppTx(request, env) {
       telegram_message_id: tg?.result?.message_id || null,
     });
   } catch (error) {
-    console.error("[notify-miniapp-tx] error", error);
+    await getWorkerLogger(env).error({
+      scope: "notify-miniapp-tx",
+      message: error?.message || String(error),
+      payload: { error },
+    }).catch(() => {});
     return json(
       {
         ok: false,
@@ -1547,6 +1586,11 @@ async function handleScheduleNotification(request, env) {
       inserted,
     });
   } catch (error) {
+    await getWorkerLogger(env).error({
+      scope: "notifications.schedule",
+      message: error?.message || String(error),
+      payload: { error },
+    }).catch(() => {});
     return json(
       {
         ok: false,
@@ -1568,6 +1612,11 @@ async function handleListDueNotifications(request, env) {
     const rows = await sbGetDueJobs(env, limit);
     return json({ ok: true, rows });
   } catch (error) {
+    await getWorkerLogger(env).error({
+      scope: "notifications.due",
+      message: error?.message || String(error),
+      payload: { error },
+    }).catch(() => {});
     return json(
       {
         ok: false,
@@ -1587,8 +1636,8 @@ async function handleTestNotification(request, env) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
+  const body = await safeJson(request);
   try {
-    const body = await safeJson(request);
     const chatId = toSafeChatId(body.user_id || body.userId);
     if (!chatId) return json({ ok: false, error: "user_id required" }, 400);
 
@@ -1600,6 +1649,12 @@ async function handleTestNotification(request, env) {
       telegram_message_id: tg?.result?.message_id || null,
     });
   } catch (error) {
+    await getWorkerLogger(env).error({
+      scope: "notifications.test",
+      user_id: body.user_id || body.userId || null,
+      message: error?.message || String(error),
+      payload: { error },
+    }).catch(() => {});
     return json(
       {
         ok: false,
@@ -1621,8 +1676,37 @@ async function handleManualCronRun(request, env) {
 
   try {
     const result = await runAllCronJobs(env, { source: "manual" });
+    const totalFailures =
+      Number(result?.notifications?.failed || 0) +
+      Number((result?.daily?.failed || []).length || 0) +
+      Number((result?.report?.failed || []).length || 0) +
+      Number((result?.debts?.failed || []).length || 0);
+    const totalSent =
+      Number(result?.notifications?.sent || 0) +
+      Number(result?.daily?.sent || 0) +
+      Number(result?.report?.sent || 0) +
+      Number(result?.debts?.sent || 0);
+
+    if (totalFailures > 0) {
+      await getWorkerLogger(env).error({
+        scope: "cron.manual",
+        message: "Manual cron xatolar bilan yakunlandi",
+        payload: result,
+      }).catch(() => {});
+    } else if (totalSent > 0) {
+      await getWorkerLogger(env).success({
+        scope: "cron.manual",
+        message: "Manual cron muvaffaqiyatli yakunlandi",
+        payload: result,
+      }).catch(() => {});
+    }
     return json(result);
   } catch (error) {
+    await getWorkerLogger(env).error({
+      scope: "cron.manual",
+      message: error?.message || String(error),
+      payload: { error },
+    }).catch(() => {});
     return json(
       {
         ok: false,
@@ -1683,7 +1767,7 @@ export default {
       }
 
       if (url.pathname === "/api/client-log") {
-        return handleClientLog(request);
+        return handleClientLog(request, env);
       }
 
       // Telegram webhook
@@ -1729,7 +1813,11 @@ export default {
 
       return serveAppAsset(request, env);
     } catch (error) {
-      console.error("[worker.fetch] unhandled", error);
+      ctx.waitUntil(getWorkerLogger(env).error({
+        scope: "worker.fetch",
+        message: error?.message || String(error),
+        payload: { error, pathname: url.pathname, method: request.method },
+      }));
       return json(
         {
           ok: false,
@@ -1749,9 +1837,41 @@ export default {
             cron: controller?.cron || null,
             scheduledTime: controller?.scheduledTime || null,
           });
-          console.log("[scheduled] result", result);
+          const totalFailures =
+            Number(result?.notifications?.failed || 0) +
+            Number((result?.daily?.failed || []).length || 0) +
+            Number((result?.report?.failed || []).length || 0) +
+            Number((result?.debts?.failed || []).length || 0);
+          const totalSent =
+            Number(result?.notifications?.sent || 0) +
+            Number(result?.daily?.sent || 0) +
+            Number(result?.report?.sent || 0) +
+            Number(result?.debts?.sent || 0);
+
+          if (totalFailures > 0) {
+            await getWorkerLogger(env).error({
+              scope: "cron.scheduled",
+              message: "Scheduled cron xatolar bilan tugadi",
+              payload: result,
+            });
+          } else if (totalSent > 0) {
+            await getWorkerLogger(env).success({
+              scope: "cron.scheduled",
+              message: "Scheduled cron muvaffaqiyatli ishladi",
+              payload: result,
+            });
+          } else {
+            getWorkerLogger(env).local("SUCCESS", "cron.scheduled.noop", {
+              note: "sent=0 failed=0",
+              scheduledTime: controller?.scheduledTime || null,
+            });
+          }
         } catch (error) {
-          console.error("[scheduled] error", error);
+          await getWorkerLogger(env).error({
+            scope: "cron.scheduled",
+            message: error?.message || String(error),
+            payload: { error, cron: controller?.cron || null },
+          });
         }
       })()
     );

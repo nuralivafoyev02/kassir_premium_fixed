@@ -4,6 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const { createTelegramOps } = require('../lib/telegram-ops.cjs');
 
 // ─── ENV CHECKS ──────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -83,11 +84,45 @@ Qarz berilganda balans darhol o'zgarmaydi. Qarz qaytganda yoki qaytarganingizda 
 
 const DEFAULT_RATE = 12200;
 const ADMIN_IDS = new Set((process.env.ADMIN_IDS || '').split(',').map(v => v.trim()).filter(Boolean));
+const ADMIN_NOTIFY_CHAT_ID = String(process.env.ADMIN_NOTIFY_CHAT_ID || process.env.OWNER_ID || [...ADMIN_IDS][0] || '').trim();
 
 // ─── LOGGING ─────────────────────────────────────────────
-const log = (scope, data) => console.log(`[BOT:${scope}]`, JSON.stringify(data));
-const warn = (scope, data) => console.warn(`[BOT:${scope}]`, JSON.stringify(data));
-const logErr = (scope, e, extra = {}) => console.error(`[BOT:${scope}]`, { msg: e?.message || String(e), ...extra });
+const appLogger = createTelegramOps({
+  botToken: BOT_TOKEN,
+  logChannelId: process.env.LOG_CHANNEL_ID,
+  adminChatId: ADMIN_NOTIFY_CHAT_ID,
+  loggingEnabled: process.env.TELEGRAM_LOGGING_ENABLED,
+  logLevel: process.env.LOG_LEVEL,
+  localLevel: process.env.LOCAL_LOG_LEVEL || 'ERROR',
+  source: 'BOT',
+});
+const log = (scope, data) => appLogger.local('INFO', scope, data);
+const warn = (scope, data) => appLogger.local('SUCCESS', scope, data);
+const logErr = (scope, e, extra = {}) => {
+  const payload = { error: e, ...extra };
+  appLogger.local('ERROR', scope, payload);
+  void appLogger.error({
+    scope,
+    user_id: extra.userId || extra.user_id || null,
+    chat_id: extra.chatId || extra.chat_id || null,
+    username: extra.username || null,
+    full_name: extra.full_name || null,
+    phone_number: extra.phone_number || null,
+    message: e?.message || String(e),
+    payload,
+  });
+};
+
+function buildUserLogContext(msg = {}, user = null, extra = {}) {
+  const fallbackFullName = `${msg?.from?.first_name || ''} ${msg?.from?.last_name || ''}`.trim() || null;
+  return {
+    user_id: extra.user_id ?? msg?.from?.id ?? user?.user_id ?? null,
+    chat_id: extra.chat_id ?? msg?.chat?.id ?? null,
+    username: extra.username ?? msg?.from?.username ?? null,
+    full_name: extra.full_name ?? user?.full_name ?? fallbackFullName,
+    phone_number: extra.phone_number ?? user?.phone_number ?? null,
+  };
+}
 
 // ─── UTILS ───────────────────────────────────────────────
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
@@ -2130,6 +2165,8 @@ module.exports = async (req, res) => {
     if (msg.contact) {
       // Faqat o'z kontaktini yuborishga ruxsat
       if (msg.contact.user_id !== userId) return res.status(200).json({ ok: true });
+      const isBrandNewUser = !user;
+      const userContext = buildUserLogContext(msg, user, { phone_number: msg.contact.phone_number });
 
       const { error: regErr } = await db.from('users').upsert({
         user_id: userId,
@@ -2140,7 +2177,7 @@ module.exports = async (req, res) => {
       }, { onConflict: 'user_id' });
 
       if (regErr) {
-        logErr('reg', regErr, { userId });
+        logErr('reg', regErr, userContext);
         return res.status(200).json({ ok: false });
       }
 
@@ -2148,6 +2185,25 @@ module.exports = async (req, res) => {
         `🎉 <b>Ro'yxatdan o'tdingiz!</b>\n\nEndi kirim-chiqimlarni yozishingiz mumkin.\n\n${GUIDE}`,
         { reply_markup: KB, parse_mode: 'HTML' }
       ).catch(() => { });
+
+      if (isBrandNewUser) {
+        const successPayload = {
+          source: 'bot start/register',
+          registered_at: iso(),
+          phone_number: msg.contact.phone_number,
+        };
+        await appLogger.success({
+          scope: 'register',
+          ...userContext,
+          message: "Yangi foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi",
+          payload: successPayload,
+        }).catch(() => { });
+        await appLogger.notifyNewUser({
+          source: 'bot start/register',
+          ...userContext,
+          payload: successPayload,
+        }).catch(() => { });
+      }
 
       return res.status(200).json({ ok: true });
     }
@@ -2197,6 +2253,12 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { enabled: sub === 'on' });
           await bot.sendMessage(chatId, `✅ ${saved.title} holati: <b>${saved.enabled ? 'yoqildi' : "o'chirildi"}</b>`, { parse_mode: 'HTML' }).catch(() => { });
+          void appLogger.info({
+            scope: 'notif-toggle',
+            ...buildUserLogContext(msg, user),
+            message: 'Notification holati yangilandi',
+            payload: { key, enabled: saved.enabled },
+          });
           return res.status(200).json({ ok: true });
         }
 
@@ -2214,6 +2276,12 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { send_time: normalized });
           await bot.sendMessage(chatId, `✅ ${saved.title} vaqti <b>${saved.send_time}</b> qilib saqlandi.`, { parse_mode: 'HTML' }).catch(() => { });
+          void appLogger.info({
+            scope: 'notif-time',
+            ...buildUserLogContext(msg, user),
+            message: 'Notification vaqti yangilandi',
+            payload: { key, send_time: saved.send_time, timezone: saved.timezone },
+          });
           return res.status(200).json({ ok: true });
         }
 
@@ -2232,6 +2300,12 @@ module.exports = async (req, res) => {
             config: base.config || {}
           });
           await bot.sendMessage(chatId, `♻️ ${saved.title} default holatiga qaytarildi.`, { parse_mode: 'HTML' }).catch(() => { });
+          void appLogger.info({
+            scope: 'notif-reset',
+            ...buildUserLogContext(msg, user),
+            message: 'Notification default holatiga qaytarildi',
+            payload: { key, enabled: saved.enabled, send_time: saved.send_time },
+          });
           return res.status(200).json({ ok: true });
         }
 
@@ -2259,6 +2333,12 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { message_template: template });
           await bot.sendMessage(chatId, `✅ ${saved.title} matni yangilandi.\n\n<i>Test uchun /notif test ${key}</i>`, { parse_mode: 'HTML' }).catch(() => { });
+          void appLogger.info({
+            scope: 'notif-text',
+            ...buildUserLogContext(msg, user),
+            message: 'Notification matni yangilandi',
+            payload: { key, template_preview: clipText(template, 160) },
+          });
           return res.status(200).json({ ok: true });
         }
 
