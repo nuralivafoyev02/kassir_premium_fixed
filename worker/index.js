@@ -430,6 +430,11 @@ function isDailyReminderWindow(value = new Date(), sendTime = "09:00", windowMin
   return currentMinutes >= targetMinutes && currentMinutes < targetMinutes + Math.max(1, Number(windowMinutes || 5));
 }
 
+function timeInZoneLabel(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
+  const p = getTimeZoneParts(value, timeZone);
+  return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+}
+
 function toUzDateTime(value, timeZone = TASHKENT_TIME_ZONE) {
   if (!value) return "belgilangan vaqt";
   try {
@@ -775,6 +780,8 @@ async function processDailyReminders(env, now = new Date(), meta = {}) {
     sent: 0,
     failed: [],
     todayKey: uzDateKey(now, timeZone),
+    local_now: timeInZoneLabel(now, timeZone),
+    time_zone: timeZone,
     scheduled_for: `${sendTime} ${timeZone}`,
     window_open: isDailyReminderWindow(now, sendTime, windowMinutes, timeZone),
     batch_size: batchSize,
@@ -794,6 +801,7 @@ async function processDailyReminders(env, now = new Date(), meta = {}) {
 
   const nowIso = new Date(now).toISOString();
   const dayStartIso = uzDayStartUtcIso(now, timeZone);
+  result.day_start_utc = dayStartIso;
 
   let lastUserId = null;
   let totalScanned = 0;
@@ -905,6 +913,8 @@ async function processDailyReports(env, now = new Date(), meta = {}) {
     sent: 0,
     failed: [],
     todayKey: uzDateKey(now, timeZone),
+    local_now: timeInZoneLabel(now, timeZone),
+    time_zone: timeZone,
     scheduled_for: `${sendTime} ${timeZone}`,
     window_open: isDailyReminderWindow(now, sendTime, windowMinutes, timeZone),
     batch_size: batchSize,
@@ -924,6 +934,7 @@ async function processDailyReports(env, now = new Date(), meta = {}) {
 
   const nowIso = new Date(now).toISOString();
   const dayStartIso = uzDayStartUtcIso(now, timeZone);
+  result.day_start_utc = dayStartIso;
 
   let lastUserId = null;
   let totalScanned = 0;

@@ -212,6 +212,7 @@
   </div>
   <div class="ov center" id="ov-export" onclick="closeOv('ov-export',event)">
     <div class="sheet c exp-modal" onclick="event.stopPropagation()">
+      <button class="sh-close" onclick="closeOv('ov-export')">✕</button>
       <div class="sh-ttl">📄 <span>Hisobot (PDF + Excel)</span></div>
       <div class="exp-hint">Hisobot 2 ta fayl ko'rinishida tayyorlanadi: PDF va Excel. Telegram botga alohida yuboriladi, yuborib bo'lmasa telefoningizga yuklab olinadi.</div>
       <div class="exp-presets">

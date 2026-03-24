@@ -299,6 +299,11 @@ function uzDayStartUtcIso(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
   return dayStartUtcIsoInZone(value, timeZone);
 }
 
+function timeInZoneLabel(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
+  const p = getTimeZoneParts(value, timeZone);
+  return `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+}
+
 function isDailyReminderWindow(value = new Date(), sendTime = '09:00', windowMinutes = 5, timeZone = TASHKENT_TIME_ZONE) {
   const p = getTimeZoneParts(value, timeZone);
   const [hh, mm] = normalizeNotifTime(sendTime, '09:00').split(':').map(Number);
@@ -462,6 +467,8 @@ async function processDailyReminders(now, meta = {}) {
     sent: 0,
     failed: [],
     todayKey: uzDateKey(now, timeZone),
+    local_now: timeInZoneLabel(now, timeZone),
+    time_zone: timeZone,
     scheduled_for: `${sendTime} ${timeZone}`,
     window_open: isDailyReminderWindow(now, sendTime, windowMinutes, timeZone),
     batch_size: batchSize,
@@ -481,6 +488,7 @@ async function processDailyReminders(now, meta = {}) {
 
   const nowIso = now.toISOString();
   const dayStartIso = uzDayStartUtcIso(now, timeZone);
+  result.day_start_utc = dayStartIso;
 
   let lastUserId = null;
   let totalScanned = 0;
@@ -583,6 +591,8 @@ async function processDailyReports(now, meta = {}) {
     sent: 0,
     failed: [],
     todayKey: uzDateKey(now, timeZone),
+    local_now: timeInZoneLabel(now, timeZone),
+    time_zone: timeZone,
     scheduled_for: `${sendTime} ${timeZone}`,
     window_open: isDailyReminderWindow(now, sendTime, windowMinutes, timeZone),
     batch_size: batchSize,
@@ -602,6 +612,7 @@ async function processDailyReports(now, meta = {}) {
 
   const nowIso = now.toISOString();
   const dayStartIso = uzDayStartUtcIso(now, timeZone);
+  result.day_start_utc = dayStartIso;
 
   let lastUserId = null;
   let totalScanned = 0;

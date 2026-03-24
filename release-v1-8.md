@@ -9,6 +9,7 @@
 5. Fullscreen modal va settings overlay'larida `X` close tugmasi ayrim selector override'lari sabab safe-area himoyasidan chiqib ketayotgan edi.
 6. Deep-link refresh (`/plan`, `/history`, `/debts`, `/add`) paytida worker asset fallback noto'g'ri ishlagani uchun qora ekran va `Cannot read properties of undefined (reading 'fetch')` xatosi chiqishi mumkin edi.
 7. Bot webhook'i optional secret bilan himoyalanmagan edi.
+8. Repo ichida qolib ketgan Vercel cron konfiguratsiyasi asl deploy modeli bo'lmagan bo'lsa ham reminder arxitekturasini chalkashtirib yuborayotgan edi.
 
 ## Root cause
 
@@ -24,12 +25,19 @@
 
 - Umumiy overlay safe-area patchi bo'lsa ham, `#ov-settings` va mobil `#ov-debt-form/#ov-export` uchun maxsus CSS override'lari padding'ni nolga tushirib yuborgan.
 - Shuning uchun close tugmasi yana Telegram native overlay hududiga kirib ketgan.
+- Bundan tashqari o'ng/chap safe-area inset'lari umuman CSS arxitekturasiga ulanmagan edi.
+- Shu sabab fullscreen profile/settings close tugmalari ayniqsa o'ng yuqori Telegram control'lari bilan to'qnashib qolayotgan edi.
 
 ### Refresh / qora ekran
 
 - Worker fetch handler SPA deep-link route'larni (`/plan`, `/history` va boshqalar) xavfsiz `index.html` fallback bilan bermagan.
 - Shu yo'lda `env.ASSETS.fetch(...)` mavjud bo'lmagan runtime holatda xato qaytarilgan.
 - Frontend route-store esa fallback route query'sini yeb, asl tab/path'ni tiklashni bilmagan.
+
+### Cron deploy modeli
+
+- Amaldagi deploy modeli Cloudflare Worker + Wrangler cron ekan, repo ichidagi Vercel cron izi operatsion haqiqatni noto'g'ri ko'rsatib turgan.
+- Shu sabab reminder diagnostikasi paytida qaysi scheduler asosiy ekanini chalkashtirish xavfi bor edi.
 
 ## O'zgargan fayllar
 
@@ -40,6 +48,10 @@
 - `src/components/overlays/AppOverlays.vue`
 - `src/router/routes.js`
 - `src/router/route-store.js`
+- `README.md`
+- `NOTIFICATION_ADMIN_REPORT_UZ.md`
+- `package.json`
+- `vercel.json`
 - `worker/index.js`
 
 ## Nimalar tuzatildi
@@ -62,7 +74,9 @@
 ### `public/app.js`
 
 - Telegram safe-area, content-safe-area va visual viewport rezervlari yaxshilandi.
+- Endi chap/o'ng Telegram safe-area inset'lari ham CSS variable sifatida sync qilinadi.
 - Overlay open/close paytida viewport metrikalari qayta sync qilinadi.
+- Hostga oid izoh Cloudflare/Wrangler neytral formatga tozalandi.
 
 ### `public/style.css`
 
@@ -70,10 +84,13 @@
 - `sheet` positioned konteyner bo'ldi.
 - Receipt viewer, debt modal va settings overlay balandliklari xavfsiz viewport bo'yicha qayta hisoblandi.
 - `#ov-settings` va mobil `#ov-debt-form/#ov-export` override'lari safe-area padding'ni bekor qilmaydigan qilib tuzatildi.
+- Overlay, settings sheet va close tugmalari endi chap/o'ng safe-area rezervlarini ham hisobga oladi.
+- Export/report modali uchun close tugmasi va yengil visual polish qo'shildi.
 
 ### `src/components/overlays/AppOverlays.vue`
 
 - Terms / privacy / guide dialog'lari endi umumiy safe-area-aware scroll class bilan ishlaydi.
+- Export/report modaliga ham umumiy close tugmasi qo'shildi.
 
 ### `src/router/routes.js`
 
@@ -93,6 +110,23 @@
 - Debt reminder oqimi paging + claim/release bilan mustahkamlandi.
 - SPA route'lar uchun `index.html` fallback va asset serve helper qo'shildi.
 - Legacy env bridge'ga webhook secret env'lari uzatiladi.
+- Daily reminder/report result payload'lariga timezone va local time debug maydonlari qo'shildi.
+
+### `README.md`
+
+- Cron yo'riqnomasi Cloudflare Worker secrets va `wrangler.jsonc` schedule bo'yicha aniqlashtirildi.
+
+### `NOTIFICATION_ADMIN_REPORT_UZ.md`
+
+- Scheduled run uchun Wrangler asosiy manba, `api/cron-reminders.js` esa fallback ekanligi aniq yozildi.
+
+### `package.json`
+
+- Loyihaning asosiy deploy yo'nalishi Cloudflare/Wrangler deb ko'rsatildi.
+
+### `vercel.json`
+
+- Vercel cron bo'limi olib tashlandi, shunda repo'da noto'g'ri asosiy scheduler taassuroti qolmaydi.
 
 ## Ishlatilgan test va check'lar
 
@@ -101,6 +135,7 @@
 - `node --check api/cron-reminders.js`
 - `node --input-type=module -e "import('./worker/index.js') ... /plan html request"`
 - `node --input-type=module -e "import('./src/router/routes.js') ... normalizePath(...)" `
+- `node --input-type=module -e "import('./worker/index.js') ... runAllCronJobs result keys"`
 - `git diff --stat`
 
 ## Test natijalari
@@ -110,6 +145,7 @@
 - `api/cron-reminders.js` syntax check muvaffaqiyatli o'tdi.
 - Worker SPA fallback simulyatsiyasida `/plan` uchun `302 -> /index.html?__kassa_route=%2Fplan` qaytdi.
 - Route normalize testi `/index.html -> /`, `/plan/ -> /plan`, `/history -> /history` natija berdi.
+- Worker manual cron route'i auth va DB/API env talab qilgani sabab to'liq runtime yuborish lokal muhitda bajarilmadi; payload debug maydonlari diff va syntax review orqali tekshirildi.
 
 ## Qolgan risklar
 
@@ -125,3 +161,4 @@
 4. Fullscreen settings, add category, plan, debt modal va receipt viewer ichida `X` tugmasi iPhone va Android Telegram WebApp'da bosilishini tekshiring.
 5. `/plan`, `/history`, `/debts`, `/add` route'larida refresh qilib, app qora ekran bermasligini tekshiring.
 6. Manual cron run bilan `daily_reminder`, `daily_report` va debt reminder payload'larini tekshiring.
+7. Cloudflare dashboard yoki `wrangler tail` orqali scheduled event har 30 daqiqada ishlayotganini tasdiqlang.

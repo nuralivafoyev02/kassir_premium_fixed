@@ -36,20 +36,32 @@ const syncViewportMetrics = () => {
   const appHeight = Math.max(0, stableHeight || vvHeight || winHeight || 0);
   const tgSafeTop = tgInsetValue(tg?.safeAreaInset, 'top');
   const tgSafeBottom = tgInsetValue(tg?.safeAreaInset, 'bottom');
+  const tgSafeLeft = tgInsetValue(tg?.safeAreaInset, 'left');
+  const tgSafeRight = tgInsetValue(tg?.safeAreaInset, 'right');
   const tgContentSafeTop = tgInsetValue(tg?.contentSafeAreaInset, 'top');
   const tgContentSafeBottom = tgInsetValue(tg?.contentSafeAreaInset, 'bottom');
+  const tgContentSafeLeft = tgInsetValue(tg?.contentSafeAreaInset, 'left');
+  const tgContentSafeRight = tgInsetValue(tg?.contentSafeAreaInset, 'right');
   const topReserve = Math.max(tgSafeTop, tgContentSafeTop, headerOffset + vvTop, vvTop);
   const bottomReserve = Math.max(tgSafeBottom, tgContentSafeBottom, bottomGap);
+  const sideLeftReserve = Math.max(tgSafeLeft, tgContentSafeLeft);
+  const sideRightReserve = Math.max(tgSafeRight, tgContentSafeRight);
 
   document.documentElement.style.setProperty('--tg-header-offset', headerOffset + 'px');
   document.documentElement.style.setProperty('--vv-top', vvTop + 'px');
   document.documentElement.style.setProperty('--vv-bottom', bottomGap + 'px');
   document.documentElement.style.setProperty('--tg-safe-top', tgSafeTop + 'px');
   document.documentElement.style.setProperty('--tg-safe-bottom', tgSafeBottom + 'px');
+  document.documentElement.style.setProperty('--tg-safe-left', tgSafeLeft + 'px');
+  document.documentElement.style.setProperty('--tg-safe-right', tgSafeRight + 'px');
   document.documentElement.style.setProperty('--tg-content-safe-top', tgContentSafeTop + 'px');
   document.documentElement.style.setProperty('--tg-content-safe-bottom', tgContentSafeBottom + 'px');
+  document.documentElement.style.setProperty('--tg-content-safe-left', tgContentSafeLeft + 'px');
+  document.documentElement.style.setProperty('--tg-content-safe-right', tgContentSafeRight + 'px');
   document.documentElement.style.setProperty('--app-top-reserve', topReserve + 'px');
   document.documentElement.style.setProperty('--app-bottom-reserve', bottomReserve + 'px');
+  document.documentElement.style.setProperty('--app-side-left-reserve', sideLeftReserve + 'px');
+  document.documentElement.style.setProperty('--app-side-right-reserve', sideRightReserve + 'px');
   document.documentElement.style.setProperty('--overlay-top-reserve', topReserve + 'px');
   document.documentElement.style.setProperty('--overlay-bottom-reserve', bottomReserve + 'px');
   if (appHeight) {
@@ -2465,7 +2477,7 @@ function resetData() {
 
 async function loadLang(lang) {
   try {
-    // Vercel / har qanday hostda doim ildizdan: /lang/uz.json (vercel.json static build)
+    // Har qanday hostda doim ildizdan: /lang/uz.json
     const url = new URL(`/lang/${lang}.json`, window.location.origin);
     const res = await fetch(url.toString(), { cache: 'no-store' });
     if (!res.ok) throw new Error('Lang file not found');
