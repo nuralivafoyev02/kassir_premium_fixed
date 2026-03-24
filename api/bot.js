@@ -378,12 +378,273 @@ async function insertTransactions(rows, source = 'bot') {
   return db.from('transactions').insert(plain).select();
 }
 
+
+const NOTIFICATION_SETTING_DEFAULTS = {
+  daily_reminder: {
+    key: 'daily_reminder',
+    title: '🌤 Kunlik eslatma',
+    enabled: true,
+    send_time: '09:00',
+    timezone: 'Asia/Tashkent',
+    message_template: `🌤 <b>Assalamu aleykum{{name_block}}</b>
+
+Bugungi xarajatlarni kiritib borishni unutmang.
+💸 Kirim, chiqim, qarz va rejalaringizni yozsangiz — men ularni tartibli saqlab boraman.
+
+📅 Bugun: {{today}}
+🤝 <i>24/7 xizmatingizda man!</i>`,
+    config: { window_minutes: 5 }
+  },
+  debt_reminder: {
+    key: 'debt_reminder',
+    title: '⏰ Qarz eslatmasi',
+    enabled: true,
+    send_time: null,
+    timezone: 'Asia/Tashkent',
+    message_template: `⏰ <b>Qarz eslatmasi</b>
+
+{{day_label}} <b>{{person_name}}</b> bilan bog'liq qarz vaqti yetdi.
+💰 {{amount}} so'm
+📌 {{direction}}
+🕒 {{when}}{{note_block}}`,
+    config: {}
+  },
+  scheduled_queue: {
+    key: 'scheduled_queue',
+    title: '📨 Scheduled notification queue',
+    enabled: true,
+    send_time: null,
+    timezone: 'Asia/Tashkent',
+    message_template: null,
+    config: {}
+  }
+};
+
+const NOTIFICATION_SETTING_ORDER = ['daily_reminder', 'debt_reminder', 'scheduled_queue'];
+
+function normalizeNotifTime(value, fallback = '09:00') {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return fallback;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function shiftNotifTime(value, deltaMinutes) {
+  const base = normalizeNotifTime(value, '09:00');
+  const [hh, mm] = base.split(':').map(Number);
+  let total = hh * 60 + mm + Number(deltaMinutes || 0);
+  total = ((total % 1440) + 1440) % 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function clipText(value, max = 900) {
+  const text = String(value || '');
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function renderNotifTemplate(template, vars = {}) {
+  return String(template || '').replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => String(vars[key] ?? ''));
+}
+
+function escapeTemplateVars(vars = {}) {
+  return Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, esc(v)]));
+}
+
+function getNotificationDefault(key) {
+  return NOTIFICATION_SETTING_DEFAULTS[key] ? JSON.parse(JSON.stringify(NOTIFICATION_SETTING_DEFAULTS[key])) : null;
+}
+
+function mergeNotificationSetting(rowOrKey, patch = null) {
+  const row = typeof rowOrKey === 'string' ? { key: rowOrKey } : (rowOrKey || {});
+  const base = getNotificationDefault(row.key);
+  if (!base) return null;
+  return {
+    ...base,
+    ...row,
+    ...(patch || {}),
+    key: base.key,
+    title: String((patch && patch.title) ?? row.title ?? base.title),
+    enabled: (patch && typeof patch.enabled === 'boolean') ? patch.enabled : (typeof row.enabled === 'boolean' ? row.enabled : base.enabled),
+    send_time: (patch && Object.prototype.hasOwnProperty.call(patch, 'send_time'))
+      ? (patch.send_time ? normalizeNotifTime(patch.send_time, base.send_time || '09:00') : null)
+      : (row.send_time ? normalizeNotifTime(row.send_time, base.send_time || '09:00') : base.send_time),
+    timezone: String((patch && patch.timezone) ?? row.timezone ?? base.timezone),
+    message_template: (patch && Object.prototype.hasOwnProperty.call(patch, 'message_template'))
+      ? (patch.message_template == null ? null : String(patch.message_template))
+      : (row.message_template == null ? base.message_template : String(row.message_template)),
+    config: {
+      ...(base.config || {}),
+      ...(row.config || {}),
+      ...((patch && patch.config) || {})
+    }
+  };
+}
+
+async function seedNotificationSettings() {
+  const payload = NOTIFICATION_SETTING_ORDER.map((key) => mergeNotificationSetting(key));
+  const { error } = await db.from('notification_settings').upsert(payload, { onConflict: 'key', ignoreDuplicates: true });
+  if (error) throw error;
+}
+
+async function listNotificationSettings() {
+  try {
+    await seedNotificationSettings();
+    const { data, error } = await db.from('notification_settings')
+      .select('key, title, enabled, send_time, timezone, message_template, config, last_sent_at, updated_at')
+      .in('key', NOTIFICATION_SETTING_ORDER)
+      .order('key', { ascending: true });
+    if (error) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    return NOTIFICATION_SETTING_ORDER.map((key) => mergeNotificationSetting(rows.find((row) => row.key === key) || key));
+  } catch (error) {
+    if (isMissingTableError(error, 'notification_settings')) {
+      const e = new Error('notification_settings jadvali topilmadi. Supabase SQL migratsiyasini ishga tushiring.');
+      e.code = 'NOTIF_TABLE_MISSING';
+      throw e;
+    }
+    throw error;
+  }
+}
+
+async function getNotificationSetting(key) {
+  const settings = await listNotificationSettings();
+  return settings.find((row) => row.key === key) || null;
+}
+
+async function saveNotificationSetting(key, patch = {}) {
+  const merged = mergeNotificationSetting(key, patch);
+  if (!merged) throw new Error('Noma\'lum notification turi');
+  try {
+    await seedNotificationSettings();
+    const payload = {
+      key: merged.key,
+      title: merged.title,
+      enabled: merged.enabled,
+      send_time: merged.send_time,
+      timezone: merged.timezone,
+      message_template: merged.message_template,
+      config: merged.config || {}
+    };
+    const { data, error } = await db.from('notification_settings').upsert(payload, { onConflict: 'key' }).select().single();
+    if (error) throw error;
+    return mergeNotificationSetting(data || key);
+  } catch (error) {
+    if (isMissingTableError(error, 'notification_settings')) {
+      const e = new Error('notification_settings jadvali topilmadi. Avval yangi SQL migratsiyani ishlating.');
+      e.code = 'NOTIF_TABLE_MISSING';
+      throw e;
+    }
+    throw error;
+  }
+}
+
+function buildNotificationPanelText(settings) {
+  const rows = (settings || []).map((item) => {
+    const status = item.enabled ? '✅ Yoniq' : '⛔️ O\'chiq';
+    const timePart = item.send_time ? ` · 🕒 ${item.send_time}` : '';
+    const lastSent = item.last_sent_at ? `\n   Oxirgi yuborish: ${esc(fmtDateTime(item.last_sent_at))}` : '';
+    return `• <b>${esc(item.title)}</b>\n   ${status}${timePart}${lastSent}`;
+  }).join('\n\n');
+
+  return `🔔 <b>NOTIFICATION BOSHQARUVI</b>\n\n${rows}\n\n<i>Daily/debt notificationlarni shu yerdan boshqarasiz. Matn yoki custom vaqtni o'zgartirish uchun <b>/notif</b> buyruqlaridan foydalaning.</i>`;
+}
+
+function buildNotificationPanelMarkup(settings = []) {
+  const rows = settings.map((item) => [{ text: `${item.enabled ? '✅' : '⛔️'} ${item.title}`, callback_data: `notif_open:${item.key}` }]);
+  rows.push([{ text: '🔄 Yangilash', callback_data: 'admin_notifications' }, { text: '🛠 Admin panel', callback_data: 'admin_panel' }]);
+  return { inline_keyboard: rows };
+}
+
+function buildNotificationHelpText(key) {
+  const sample = key || 'daily_reminder';
+  return `🧭 <b>Notification buyruqlari</b>\n\n<b>/notif</b> — notification panel\n<b>/notif list</b> — barcha sozlamalar\n<b>/notif on ${sample}</b> — yoqish\n<b>/notif off ${sample}</b> — o'chirish\n<b>/notif time daily_reminder 08:30</b> — daily reminder vaqtini o'zgartirish\n<b>/notif text daily_reminder Assalomu aleykum...</b> — matnni yangilash\n<b>/notif reset daily_reminder</b> — default matnni qaytarish\n<b>/notif test daily_reminder</b> — test yuborish\n\nMavjud keylar: <code>daily_reminder</code>, <code>debt_reminder</code>, <code>scheduled_queue</code>`;
+}
+
+function buildNotificationDetailText(setting) {
+  const status = setting.enabled ? '✅ Yoniq' : '⛔️ O\'chiq';
+  const timeLine = setting.send_time ? `🕒 Vaqt: <b>${setting.send_time}</b> (${esc(setting.timezone || 'Asia/Tashkent')})\n` : '';
+  const templateLine = setting.message_template
+    ? `📝 Matn shabloni:\n<pre>${esc(clipText(setting.message_template, 1200))}</pre>`
+    : `📝 Matn shabloni: <i>Bu notification tizim matniga tayangan.</i>`;
+  const lastSent = setting.last_sent_at ? `\nOxirgi yuborish: <b>${esc(fmtDateTime(setting.last_sent_at))}</b>` : '';
+  return `🔔 <b>${esc(setting.title)}</b>\n\nHolat: <b>${status}</b>\n${timeLine}${templateLine}${lastSent}\n\n${buildNotificationHelpText(setting.key)}`;
+}
+
+function buildNotificationDetailMarkup(setting) {
+  const rows = [
+    [
+      { text: setting.enabled ? '⛔️ O\'chirish' : '✅ Yoqish', callback_data: `notif_toggle:${setting.key}` },
+      { text: '🧪 Test', callback_data: `notif_test:${setting.key}` }
+    ]
+  ];
+
+  if (setting.key === 'daily_reminder') {
+    rows.push([
+      { text: '➖ 30m', callback_data: `notif_shift:${setting.key}:-30` },
+      { text: `🕒 ${setting.send_time || '09:00'}`, callback_data: `notif_noop:${setting.key}` },
+      { text: '➕ 30m', callback_data: `notif_shift:${setting.key}:30` }
+    ]);
+    rows.push([
+      { text: '08:00', callback_data: `notif_preset:${setting.key}:08-00` },
+      { text: '09:00', callback_data: `notif_preset:${setting.key}:09-00` },
+      { text: '10:00', callback_data: `notif_preset:${setting.key}:10-00` }
+    ]);
+  }
+
+  rows.push([
+    { text: '🧭 Buyruqlar', callback_data: `notif_help:${setting.key}` },
+    { text: '🔙 Orqaga', callback_data: 'admin_notifications' }
+  ]);
+  return { inline_keyboard: rows };
+}
+
+function buildNotificationPreviewVars(settingKey) {
+  if (settingKey === 'debt_reminder') {
+    return {
+      day_label: 'Bugun',
+      person_name: 'Suxrob',
+      amount: numFmt(250000),
+      direction: 'Siz qaytarishingiz kerak',
+      when: fmtDateTime(new Date()),
+      note_block: `\n📝 ${esc('Sinov izohi')}`
+    };
+  }
+
+  return {
+    name_block: `, <b>${esc('Nurali')}</b>`,
+    today: esc(new Date().toLocaleDateString('uz-UZ'))
+  };
+}
+
+function renderNotificationPreviewText(setting) {
+  if (!setting?.message_template) {
+    if (setting?.key === 'scheduled_queue') {
+      return `<b>Scheduled queue test</b>\n\nQueue orqali yuboriladigan notificationlar Worker cron ichida ishlaydi ✅`;
+    }
+    return `<b>Notification test</b>\n\nMatn shabloni mavjud emas.`;
+  }
+  return renderNotifTemplate(setting.message_template, buildNotificationPreviewVars(setting.key));
+}
+
+async function sendNotificationPreview(chatId, settingKey) {
+  const setting = await getNotificationSetting(settingKey);
+  if (!setting) throw new Error('Notification topilmadi');
+  const text = renderNotificationPreviewText(setting);
+  await bot.sendMessage(chatId, text, { parse_mode: 'HTML', disable_web_page_preview: true });
+  return setting;
+}
+
+
 function adminPanelMarkup() {
   return {
     inline_keyboard: [
       [{ text: '📊 Statistika', callback_data: 'admin_stats' }, { text: '👥 Yangi userlar', callback_data: 'admin_users' }],
       [{ text: '📣 Broadcastlar', callback_data: 'admin_broadcasts' }, { text: '⚠️ Xatolar', callback_data: 'admin_failed' }],
-      [{ text: "🧭 Qo'llanma", callback_data: 'admin_help' }, { text: '🔄 Yangilash', callback_data: 'admin_panel' }]
+      [{ text: '🔔 Notificationlar', callback_data: 'admin_notifications' }, { text: "🧭 Qo'llanma", callback_data: 'admin_help' }],
+      [{ text: '🔄 Yangilash', callback_data: 'admin_panel' }]
     ]
   };
 }
@@ -496,11 +757,17 @@ function buildBroadcastGuideText() {
 
 <b>/admin</b> — admin panelni ochadi
 <b>/message Matn</b> — broadcast draft yaratadi
+<b>/notif</b> — notification sozlamalar paneli
 
 <b>Tugmali broadcast:</b>
 <code>/message Assalomu alaykum
 --
 Kanal | https://t.me/username</code>
+
+<b>Notification boshqaruvi:</b>
+<code>/notif time daily_reminder 08:30</code>
+<code>/notif text daily_reminder Assalomu aleykum...</code>
+<code>/notif test debt_reminder</code>
 
 Rasm/video/document bilan ham <b>/message</b> yuborsangiz, preview chiqadi.
 Xato bo'lsa, natija oynasida yetkazilmagan userlar uchun alohida <b>qayta yuborish</b> tugmasi chiqadi.`;
@@ -511,6 +778,24 @@ async function sendAdminPanel(chatId, messageId = null) {
   return safeEditOrSend(chatId, messageId, buildAdminPanelText(snapshot), {
     parse_mode: 'HTML',
     reply_markup: adminPanelMarkup()
+  });
+}
+
+
+async function sendNotificationPanel(chatId, messageId = null) {
+  const settings = await listNotificationSettings();
+  return safeEditOrSend(chatId, messageId, buildNotificationPanelText(settings), {
+    parse_mode: 'HTML',
+    reply_markup: buildNotificationPanelMarkup(settings)
+  });
+}
+
+async function sendNotificationDetail(chatId, messageId, key) {
+  const setting = await getNotificationSetting(key);
+  if (!setting) throw new Error('Notification topilmadi');
+  return safeEditOrSend(chatId, messageId, buildNotificationDetailText(setting), {
+    parse_mode: 'HTML',
+    reply_markup: buildNotificationDetailMarkup(setting)
   });
 }
 
@@ -1570,6 +1855,88 @@ module.exports = async (req, res) => {
         }
       }
 
+
+      if (data.startsWith('notif_')) {
+        if (!isAdmin(userId)) {
+          await bot.answerCallbackQuery(q.id, { text: 'Admin emas', show_alert: true }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+
+        const [action, key, rawValue] = data.split(':');
+
+        if (action === 'notif_noop') {
+          await bot.answerCallbackQuery(q.id, { text: 'Custom vaqt uchun /notif time daily_reminder 08:30 deb yozing' }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+
+        if (action === 'notif_help') {
+          await bot.answerCallbackQuery(q.id).catch(() => { });
+          await safeEditOrSend(chatId, msgId, buildNotificationHelpText(key), {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Orqaga', callback_data: `notif_open:${key}` }], [{ text: '🛠 Admin panel', callback_data: 'admin_panel' }]] }
+          });
+          return res.status(200).json({ ok: true });
+        }
+
+        if (action === 'notif_open') {
+          await bot.answerCallbackQuery(q.id).catch(() => { });
+          try {
+            await sendNotificationDetail(chatId, msgId, key);
+          } catch (e) {
+            await safeEditOrSend(chatId, msgId, `⚠️ Notificationni ochishda xatolik: ${esc(tgErr(e))}`, { parse_mode: 'HTML', reply_markup: adminPanelMarkup() });
+          }
+          return res.status(200).json({ ok: true });
+        }
+
+        if (action === 'notif_toggle') {
+          try {
+            const current = await getNotificationSetting(key);
+            const next = await saveNotificationSetting(key, { enabled: !current.enabled });
+            await bot.answerCallbackQuery(q.id, { text: next.enabled ? 'Yoqildi ✅' : "O'chirildi ⛔️" }).catch(() => { });
+            await sendNotificationDetail(chatId, msgId, key);
+          } catch (e) {
+            await bot.answerCallbackQuery(q.id, { text: tgErr(e), show_alert: true }).catch(() => { });
+          }
+          return res.status(200).json({ ok: true });
+        }
+
+        if (action === 'notif_shift') {
+          try {
+            const current = await getNotificationSetting(key);
+            const nextTime = shiftNotifTime(current.send_time || '09:00', Number(rawValue || 0));
+            await saveNotificationSetting(key, { send_time: nextTime });
+            await bot.answerCallbackQuery(q.id, { text: `Yangi vaqt: ${nextTime}` }).catch(() => { });
+            await sendNotificationDetail(chatId, msgId, key);
+          } catch (e) {
+            await bot.answerCallbackQuery(q.id, { text: tgErr(e), show_alert: true }).catch(() => { });
+          }
+          return res.status(200).json({ ok: true });
+        }
+
+        if (action === 'notif_preset') {
+          try {
+            const nextTime = String(rawValue || '').replace('-', ':');
+            await saveNotificationSetting(key, { send_time: nextTime });
+            await bot.answerCallbackQuery(q.id, { text: `Vaqt saqlandi: ${nextTime}` }).catch(() => { });
+            await sendNotificationDetail(chatId, msgId, key);
+          } catch (e) {
+            await bot.answerCallbackQuery(q.id, { text: tgErr(e), show_alert: true }).catch(() => { });
+          }
+          return res.status(200).json({ ok: true });
+        }
+
+        if (action === 'notif_test') {
+          try {
+            await sendNotificationPreview(chatId, key);
+            await bot.answerCallbackQuery(q.id, { text: 'Test yuborildi ✅' }).catch(() => { });
+          } catch (e) {
+            await bot.answerCallbackQuery(q.id, { text: tgErr(e), show_alert: true }).catch(() => { });
+          }
+          return res.status(200).json({ ok: true });
+        }
+      }
+
+
       if (data.startsWith('admin_')) {
         if (!isAdmin(userId)) {
           await bot.answerCallbackQuery(q.id, { text: 'Admin emas', show_alert: true }).catch(() => { });
@@ -1624,6 +1991,15 @@ module.exports = async (req, res) => {
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [...rowsKb, [{ text: '🛠 Admin panel', callback_data: 'admin_panel' }]] }
           });
+          return res.status(200).json({ ok: true });
+        }
+
+        if (data === 'admin_notifications') {
+          try {
+            await sendNotificationPanel(chatId, msgId);
+          } catch (e) {
+            await safeEditOrSend(chatId, msgId, `⚠️ Notification panelni ochishda xatolik: ${esc(tgErr(e))}`, { parse_mode: 'HTML', reply_markup: adminPanelMarkup() });
+          }
           return res.status(200).json({ ok: true });
         }
 
@@ -1736,6 +2112,108 @@ module.exports = async (req, res) => {
         await sendAdminPanel(chatId);
       } catch (e) {
         await bot.sendMessage(chatId, `⚠️ Admin panelni ochishda xatolik: ${esc(tgErr(e))}`, { parse_mode: 'HTML' }).catch(() => { });
+      }
+      return res.status(200).json({ ok: true });
+    }
+
+
+    if (text === '/notif' || text.startsWith('/notif ')) {
+      if (!isAdmin(userId)) {
+        await bot.sendMessage(chatId, '⛔️ Bu buyruq faqat adminlar uchun.').catch(() => { });
+        return res.status(200).json({ ok: true });
+      }
+
+      const full = String(text || '').trim();
+      const parts = full.split(/\s+/);
+      const sub = (parts[1] || '').toLowerCase();
+
+      try {
+        if (!sub || sub === 'list') {
+          await sendNotificationPanel(chatId);
+          return res.status(200).json({ ok: true });
+        }
+
+        if (sub === 'help') {
+          await bot.sendMessage(chatId, buildNotificationHelpText(), { parse_mode: 'HTML' }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+
+        if (sub === 'on' || sub === 'off') {
+          const key = parts[2];
+          if (!NOTIFICATION_SETTING_DEFAULTS[key]) {
+            await bot.sendMessage(chatId, '⚠️ Noto\'g\'ri key. Mavjudlari: daily_reminder, debt_reminder, scheduled_queue').catch(() => { });
+            return res.status(200).json({ ok: true });
+          }
+          const saved = await saveNotificationSetting(key, { enabled: sub === 'on' });
+          await bot.sendMessage(chatId, `✅ ${saved.title} holati: <b>${saved.enabled ? 'yoqildi' : "o'chirildi"}</b>`, { parse_mode: 'HTML' }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+
+        if (sub === 'time') {
+          const key = parts[2];
+          const timeValue = parts[3];
+          if (key !== 'daily_reminder') {
+            await bot.sendMessage(chatId, '⚠️ Vaqt sozlamasi hozircha faqat daily_reminder uchun mavjud.').catch(() => { });
+            return res.status(200).json({ ok: true });
+          }
+          const normalized = normalizeNotifTime(timeValue, '');
+          if (!normalized) {
+            await bot.sendMessage(chatId, '⚠️ Vaqt formati noto\'g\'ri. Misol: /notif time daily_reminder 08:30').catch(() => { });
+            return res.status(200).json({ ok: true });
+          }
+          const saved = await saveNotificationSetting(key, { send_time: normalized });
+          await bot.sendMessage(chatId, `✅ ${saved.title} vaqti <b>${saved.send_time}</b> qilib saqlandi.`, { parse_mode: 'HTML' }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+
+        if (sub === 'reset') {
+          const key = parts[2];
+          const base = getNotificationDefault(key);
+          if (!base) {
+            await bot.sendMessage(chatId, '⚠️ Noto\'g\'ri key.').catch(() => { });
+            return res.status(200).json({ ok: true });
+          }
+          const saved = await saveNotificationSetting(key, {
+            enabled: base.enabled,
+            send_time: base.send_time,
+            timezone: base.timezone,
+            message_template: base.message_template,
+            config: base.config || {}
+          });
+          await bot.sendMessage(chatId, `♻️ ${saved.title} default holatiga qaytarildi.`, { parse_mode: 'HTML' }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+
+        if (sub === 'test') {
+          const key = parts[2];
+          if (!NOTIFICATION_SETTING_DEFAULTS[key]) {
+            await bot.sendMessage(chatId, '⚠️ Noto\'g\'ri key.').catch(() => { });
+            return res.status(200).json({ ok: true });
+          }
+          await sendNotificationPreview(chatId, key);
+          return res.status(200).json({ ok: true });
+        }
+
+        if (sub === 'text') {
+          const m = full.match(/^\/notif\s+text\s+(daily_reminder|debt_reminder)\s+([\s\S]+)$/i);
+          if (!m) {
+            await bot.sendMessage(chatId, '⚠️ Format: /notif text daily_reminder Assalomu aleykum...').catch(() => { });
+            return res.status(200).json({ ok: true });
+          }
+          const key = m[1];
+          const template = String(m[2] || '').trim();
+          if (!template) {
+            await bot.sendMessage(chatId, '⚠️ Matn bo\'sh bo\'lmasin.').catch(() => { });
+            return res.status(200).json({ ok: true });
+          }
+          const saved = await saveNotificationSetting(key, { message_template: template });
+          await bot.sendMessage(chatId, `✅ ${saved.title} matni yangilandi.\n\n<i>Test uchun /notif test ${key}</i>`, { parse_mode: 'HTML' }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+
+        await bot.sendMessage(chatId, buildNotificationHelpText(), { parse_mode: 'HTML' }).catch(() => { });
+      } catch (e) {
+        await bot.sendMessage(chatId, `⚠️ Notification sozlamasida xatolik: ${esc(tgErr(e))}`, { parse_mode: 'HTML' }).catch(() => { });
       }
       return res.status(200).json({ ok: true });
     }

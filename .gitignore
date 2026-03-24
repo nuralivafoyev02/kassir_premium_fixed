@@ -1,6 +1,4 @@
 .env
 node_modules/
-supabase.sql
-README.legacy.md
 dist/
-.DS_Store
+supabase.sql

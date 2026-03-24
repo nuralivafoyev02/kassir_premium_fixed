@@ -180,6 +180,47 @@ function sbMissingColumn(error, column) {
 const TASHKENT_TIME_ZONE = "Asia/Tashkent";
 const TASHKENT_UTC_OFFSET_HOURS = 5;
 
+const NOTIFICATION_DEFAULTS = {
+  daily_reminder: {
+    key: "daily_reminder",
+    title: "Kunlik eslatma",
+    enabled: true,
+    send_time: "09:00",
+    timezone: TASHKENT_TIME_ZONE,
+    message_template: `🌤 <b>Assalamu aleykum{{name_block}}</b>
+
+Bugungi xarajatlarni kiritib borishni unutmang.
+💸 Kirim, chiqim, qarz va rejalaringizni yozsangiz — men ularni tartibli saqlab boraman.
+
+📅 Bugun: {{today}}
+🤝 <i>24/7 xizmatingizda man!</i>`,
+    config: { window_minutes: 5 },
+  },
+  debt_reminder: {
+    key: "debt_reminder",
+    title: "Qarz eslatmasi",
+    enabled: true,
+    send_time: null,
+    timezone: TASHKENT_TIME_ZONE,
+    message_template: `⏰ <b>Qarz eslatmasi</b>
+
+{{day_label}} <b>{{person_name}}</b> bilan bog'liq qarz vaqti yetdi.
+💰 {{amount}} so'm
+📌 {{direction}}
+🕒 {{when}}{{note_block}}`,
+    config: {},
+  },
+  scheduled_queue: {
+    key: "scheduled_queue",
+    title: "Scheduled queue",
+    enabled: true,
+    send_time: null,
+    timezone: TASHKENT_TIME_ZONE,
+    message_template: null,
+    config: {},
+  },
+};
+
 function getTashkentParts(value = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TASHKENT_TIME_ZONE,
@@ -203,6 +244,94 @@ function getTashkentParts(value = new Date()) {
   };
 }
 
+function normalizeNotifTime(value, fallback = "09:00") {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return fallback;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function renderTemplate(template, vars = {}) {
+  return String(template || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => String(vars[key] ?? ""));
+}
+
+function mergeNotificationSetting(rowOrKey, patch = null) {
+  const row = typeof rowOrKey === "string" ? { key: rowOrKey } : (rowOrKey || {});
+  const base = NOTIFICATION_DEFAULTS[row.key] || null;
+  if (!base) return null;
+  return {
+    ...base,
+    ...row,
+    ...(patch || {}),
+    key: base.key,
+    enabled: (patch && typeof patch.enabled === "boolean") ? patch.enabled : (typeof row.enabled === "boolean" ? row.enabled : base.enabled),
+    send_time: (patch && Object.prototype.hasOwnProperty.call(patch, "send_time"))
+      ? (patch.send_time ? normalizeNotifTime(patch.send_time, base.send_time || "09:00") : null)
+      : (row.send_time ? normalizeNotifTime(row.send_time, base.send_time || "09:00") : base.send_time),
+    timezone: String((patch && patch.timezone) ?? row.timezone ?? base.timezone),
+    message_template: (patch && Object.prototype.hasOwnProperty.call(patch, "message_template"))
+      ? patch.message_template
+      : (row.message_template == null ? base.message_template : row.message_template),
+    config: {
+      ...(base.config || {}),
+      ...(row.config || {}),
+      ...((patch && patch.config) || {}),
+    },
+  };
+}
+
+async function sbGetNotificationSettings(env) {
+  try {
+    const rows = await sbFetch(env, `/notification_settings?select=key,title,enabled,send_time,timezone,message_template,config,last_sent_at,updated_at`);
+    const map = {};
+    for (const key of Object.keys(NOTIFICATION_DEFAULTS)) {
+      const row = Array.isArray(rows) ? rows.find((item) => item.key === key) : null;
+      map[key] = mergeNotificationSetting(row || key);
+    }
+    return map;
+  } catch (error) {
+    if (sbMissingTable(error, "notification_settings")) {
+      return Object.fromEntries(Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting(key)]));
+    }
+    throw error;
+  }
+}
+
+async function sbTouchNotificationSetting(env, key, payload = {}) {
+  try {
+    return await sbFetch(env, `/notification_settings?key=eq.${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    if (sbMissingTable(error, "notification_settings")) return null;
+    throw error;
+  }
+}
+
+async function sbInsertNotificationLog(env, row) {
+  try {
+    return await sbFetch(env, `/notification_logs`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(row),
+    });
+  } catch (error) {
+    if (sbMissingTable(error, "notification_logs")) return null;
+    throw error;
+  }
+}
+
 function uzDateKey(value = new Date()) {
   const p = getTashkentParts(value);
   return `${String(p.year).padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
@@ -213,9 +342,12 @@ function uzDayStartUtcIso(value = new Date()) {
   return new Date(Date.UTC(p.year, p.month - 1, p.day, -TASHKENT_UTC_OFFSET_HOURS, 0, 0, 0)).toISOString();
 }
 
-function isDailyReminderWindow(value = new Date()) {
+function isDailyReminderWindow(value = new Date(), sendTime = "09:00", windowMinutes = 5) {
   const p = getTashkentParts(value);
-  return p.hour === 9 && p.minute < 5;
+  const [hh, mm] = normalizeNotifTime(sendTime, "09:00").split(":").map(Number);
+  const currentMinutes = p.hour * 60 + p.minute;
+  const targetMinutes = hh * 60 + mm;
+  return currentMinutes >= targetMinutes && currentMinutes < targetMinutes + Number(windowMinutes || 5);
 }
 
 function toUzDateTime(value) {
@@ -227,15 +359,26 @@ function toUzDateTime(value) {
   }
 }
 
-function buildDailyReminderText(fullName = "") {
-  const greetingName = String(fullName || "").trim();
-  const safeName = greetingName ? `, <b>${esc(greetingName)}</b>` : "";
-  return `🌤 <b>Assalamu aleykum${safeName}</b>
+function buildDailyReminderText(setting, fullName = "", now = new Date()) {
+  const template = setting?.message_template || NOTIFICATION_DEFAULTS.daily_reminder.message_template;
+  return renderTemplate(template, {
+    name_block: String(fullName || "").trim() ? `, <b>${esc(fullName)}</b>` : "",
+    today: esc(new Date(now).toLocaleDateString("uz-UZ", { timeZone: TASHKENT_TIME_ZONE })),
+  });
+}
 
-Bugungi xarajatlarni kiritib borishni unutmang.
-💸 Kirim, chiqim, qarz va rejalaringizni yozsangiz — men ularni tartibli saqlab boraman.
-
-🤝 <i>24/7 xizmatingizda man!</i>`;
+function buildDebtReminderText(setting, debt, targetDate, now = new Date()) {
+  const template = setting?.message_template || NOTIFICATION_DEFAULTS.debt_reminder.message_template;
+  const vars = {
+    day_label: targetDate && uzDateKey(targetDate) === uzDateKey(now) ? "Bugun" : "Eslatma",
+    person_name: esc(debt.person_name || "Noma'lum"),
+    amount: numFmt(debt.amount || 0),
+    direction: debt.direction === "payable" ? "Siz qaytarishingiz kerak" : "Sizga qaytishi kerak",
+    when: esc(targetDate ? toUzDateTime(targetDate) : "belgilangan vaqt"),
+    note_block: debt.note ? `
+📝 ${esc(debt.note)}` : "",
+  };
+  return renderTemplate(template, vars);
 }
 
 async function sbInsertNotificationJob(env, row) {
@@ -325,6 +468,22 @@ function renderNotificationText(job) {
 }
 
 async function processDueNotifications(env, meta = {}) {
+  const settings = await sbGetNotificationSettings(env);
+  const queueSetting = settings.scheduled_queue || mergeNotificationSetting("scheduled_queue");
+
+  if (queueSetting.enabled === false) {
+    return {
+      ok: true,
+      source: meta.source || "manual",
+      total_due: 0,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      errors: [],
+      note: "scheduled queue disabled",
+    };
+  }
+
   let dueJobs;
   try {
     dueJobs = await sbGetDueJobs(env, 50);
@@ -371,6 +530,16 @@ async function processDueNotifications(env, meta = {}) {
       await tgSendMessage(env, job.user_id, textToSend);
 
       await sbMarkJobSent(env, job.id);
+      await sbInsertNotificationLog(env, {
+        setting_key: "scheduled_queue",
+        user_id: job.user_id,
+        job_id: job.id,
+        status: "sent",
+        message_text: textToSend,
+        sent_at: isoNow(),
+        meta: { type: job.type || "custom", scheduled_for: job.scheduled_for || null },
+      });
+      await sbTouchNotificationSetting(env, "scheduled_queue", { last_sent_at: isoNow() });
       result.sent += 1;
     } catch (error) {
       result.failed += 1;
@@ -381,6 +550,16 @@ async function processDueNotifications(env, meta = {}) {
 
       try {
         await sbMarkJobFailed(env, job.id, error?.message || String(error));
+        await sbInsertNotificationLog(env, {
+          setting_key: "scheduled_queue",
+          user_id: job.user_id,
+          job_id: job.id,
+          status: "failed",
+          message_text: renderNotificationText(job),
+          error_text: error?.message || String(error),
+          sent_at: isoNow(),
+          meta: { type: job.type || "custom", scheduled_for: job.scheduled_for || null },
+        });
       } catch (patchError) {
         result.errors.push({
           id: job.id,
@@ -433,14 +612,24 @@ async function markDailyReminderSent(env, userId, nowIso) {
 }
 
 async function processDailyReminders(env, now = new Date(), meta = {}) {
+  const settings = await sbGetNotificationSettings(env);
+  const dailySetting = settings.daily_reminder || mergeNotificationSetting("daily_reminder");
+  const windowMinutes = Number(dailySetting?.config?.window_minutes || 5);
+  const sendTime = dailySetting?.send_time || "09:00";
+
   const result = {
     checked: 0,
     sent: 0,
     failed: [],
     todayKey: uzDateKey(now),
-    scheduled_for: "09:00 Asia/Tashkent",
-    window_open: isDailyReminderWindow(now),
+    scheduled_for: `${sendTime} ${dailySetting?.timezone || TASHKENT_TIME_ZONE}`,
+    window_open: isDailyReminderWindow(now, sendTime, windowMinutes),
   };
+
+  if (dailySetting.enabled === false) {
+    result.note = "daily reminder disabled";
+    return result;
+  }
 
   if (!result.window_open) {
     result.note = "outside daily reminder window";
@@ -473,28 +662,58 @@ async function processDailyReminders(env, now = new Date(), meta = {}) {
   result.checked = candidates.length;
 
   for (const row of candidates) {
+    const html = buildDailyReminderText(dailySetting, row.full_name, now);
     try {
-      await tgSendMessage(env, row.user_id, buildDailyReminderText(row.full_name));
+      await tgSendMessage(env, row.user_id, html);
       await markDailyReminderSent(env, row.user_id, nowIso);
+      await sbInsertNotificationLog(env, {
+        setting_key: "daily_reminder",
+        user_id: row.user_id,
+        status: "sent",
+        message_text: html,
+        sent_at: nowIso,
+        meta: { send_time: sendTime, source: meta.source || "manual" },
+      });
       result.sent += 1;
     } catch (error) {
       result.failed.push({
         user_id: row.user_id,
         error: error?.message || String(error),
       });
+      await sbInsertNotificationLog(env, {
+        setting_key: "daily_reminder",
+        user_id: row.user_id,
+        status: "failed",
+        message_text: html,
+        error_text: error?.message || String(error),
+        sent_at: nowIso,
+        meta: { send_time: sendTime, source: meta.source || "manual" },
+      });
     }
+  }
+
+  if (result.sent > 0) {
+    await sbTouchNotificationSetting(env, "daily_reminder", { last_sent_at: nowIso });
   }
 
   return result;
 }
 
 async function processDebtReminders(env, now = new Date(), meta = {}) {
+  const settings = await sbGetNotificationSettings(env);
+  const debtSetting = settings.debt_reminder || mergeNotificationSetting("debt_reminder");
+
   const result = {
     checked: 0,
     due: 0,
     sent: 0,
     failed: [],
   };
+
+  if (debtSetting.enabled === false) {
+    result.note = "debt reminder disabled";
+    return result;
+  }
 
   let debts;
   try {
@@ -527,18 +746,7 @@ async function processDebtReminders(env, now = new Date(), meta = {}) {
   for (const debt of dueItems) {
     const target = debt.remind_at || debt.due_at || null;
     const targetDate = target ? new Date(target) : null;
-    const dayLabel = targetDate && uzDateKey(targetDate) === uzDateKey(now)
-      ? "Bugun"
-      : "Eslatma";
-    const direction = debt.direction === "payable" ? "Siz qaytarishingiz kerak" : "Sizga qaytishi kerak";
-    const when = targetDate ? toUzDateTime(targetDate) : "belgilangan vaqt";
-    const text = `⏰ <b>Qarz eslatmasi</b>
-
-${dayLabel} <b>${esc(debt.person_name)}</b> bilan bog'liq qarz vaqti yetdi.
-💰 ${numFmt(debt.amount)} so'm
-📌 ${direction}
-🕒 ${when}${debt.note ? `
-📝 ${esc(debt.note)}` : ""}`;
+    const text = buildDebtReminderText(debtSetting, debt, targetDate, now);
 
     try {
       await tgSendMessage(env, debt.user_id, text);
@@ -550,6 +758,14 @@ ${dayLabel} <b>${esc(debt.person_name)}</b> bilan bog'liq qarz vaqti yetdi.
         },
         body: JSON.stringify({ reminder_sent_at: new Date(now).toISOString() }),
       });
+      await sbInsertNotificationLog(env, {
+        setting_key: "debt_reminder",
+        user_id: debt.user_id,
+        status: "sent",
+        message_text: text,
+        sent_at: isoNow(),
+        meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null },
+      });
       result.sent += 1;
     } catch (error) {
       result.failed.push({
@@ -557,7 +773,20 @@ ${dayLabel} <b>${esc(debt.person_name)}</b> bilan bog'liq qarz vaqti yetdi.
         user_id: debt.user_id,
         error: error?.message || String(error),
       });
+      await sbInsertNotificationLog(env, {
+        setting_key: "debt_reminder",
+        user_id: debt.user_id,
+        status: "failed",
+        message_text: text,
+        error_text: error?.message || String(error),
+        sent_at: isoNow(),
+        meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null },
+      });
     }
+  }
+
+  if (result.sent > 0) {
+    await sbTouchNotificationSetting(env, "debt_reminder", { last_sent_at: isoNow() });
   }
 
   return result;

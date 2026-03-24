@@ -9,6 +9,39 @@ const SUPA_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_K
 const CRON_SECRET = process.env.CRON_SECRET;
 const TASHKENT_TIME_ZONE = 'Asia/Tashkent';
 
+
+const NOTIFICATION_DEFAULTS = {
+  daily_reminder: {
+    key: 'daily_reminder',
+    title: 'Kunlik eslatma',
+    enabled: true,
+    send_time: '09:00',
+    timezone: TASHKENT_TIME_ZONE,
+    message_template: `🌤 <b>Assalamu aleykum{{name_block}}</b>
+
+Bugungi xarajatlarni kiritib borishni unutmang.
+💸 Kirim, chiqim, qarz va rejalaringizni yozsangiz — men ularni tartibli saqlab boraman.
+
+📅 Bugun: {{today}}
+🤝 <i>24/7 xizmatingizda man!</i>`,
+    config: { window_minutes: 5 },
+  },
+  debt_reminder: {
+    key: 'debt_reminder',
+    title: 'Qarz eslatmasi',
+    enabled: true,
+    send_time: null,
+    timezone: TASHKENT_TIME_ZONE,
+    message_template: `⏰ <b>Qarz eslatmasi</b>
+
+{{day_label}} <b>{{person_name}}</b> bilan bog'liq qarz vaqti yetdi.
+💰 {{amount}} so'm
+📌 {{direction}}
+🕒 {{when}}{{note_block}}`,
+    config: {},
+  },
+};
+
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN yo'q");
 if (!SUPA_URL) throw new Error("SUPABASE_URL yo'q");
 if (!SUPA_KEY) throw new Error("SUPABASE_KEY yo'q");
@@ -36,6 +69,88 @@ function missingColumn(error, column) {
     msg.includes('unknown column') ||
     msg.includes('could not find the column')
   );
+}
+
+
+function normalizeNotifTime(value, fallback = '09:00') {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return fallback;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function renderTemplate(template, vars = {}) {
+  return String(template || '').replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => String(vars[key] ?? ''));
+}
+
+function mergeNotificationSetting(rowOrKey, patch = null) {
+  const row = typeof rowOrKey === 'string' ? { key: rowOrKey } : (rowOrKey || {});
+  const base = NOTIFICATION_DEFAULTS[row.key] || null;
+  if (!base) return null;
+  return {
+    ...base,
+    ...row,
+    ...(patch || {}),
+    key: base.key,
+    enabled: (patch && typeof patch.enabled === 'boolean') ? patch.enabled : (typeof row.enabled === 'boolean' ? row.enabled : base.enabled),
+    send_time: (patch && Object.prototype.hasOwnProperty.call(patch, 'send_time'))
+      ? (patch.send_time ? normalizeNotifTime(patch.send_time, base.send_time || '09:00') : null)
+      : (row.send_time ? normalizeNotifTime(row.send_time, base.send_time || '09:00') : base.send_time),
+    timezone: String((patch && patch.timezone) ?? row.timezone ?? base.timezone),
+    message_template: (patch && Object.prototype.hasOwnProperty.call(patch, 'message_template'))
+      ? patch.message_template
+      : (row.message_template == null ? base.message_template : row.message_template),
+    config: {
+      ...(base.config || {}),
+      ...(row.config || {}),
+      ...((patch && patch.config) || {}),
+    },
+  };
+}
+
+async function getNotificationSettings() {
+  const { data, error } = await db.from('notification_settings').select('key,title,enabled,send_time,timezone,message_template,config,last_sent_at');
+  if (error) {
+    if (relationMissing(error, 'notification_settings')) {
+      return Object.fromEntries(Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting(key)]));
+    }
+    throw error;
+  }
+  return Object.fromEntries(Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting((data || []).find((row) => row.key === key) || key)]));
+}
+
+async function touchNotificationSetting(key, payload = {}) {
+  const { error } = await db.from('notification_settings').update(payload).eq('key', key);
+  if (error && !relationMissing(error, 'notification_settings')) throw error;
+}
+
+async function insertNotificationLog(row) {
+  const { error } = await db.from('notification_logs').insert(row);
+  if (error && !relationMissing(error, 'notification_logs')) throw error;
+}
+
+function buildDailyReminderText(setting, fullName = '', now = new Date()) {
+  const template = setting?.message_template || NOTIFICATION_DEFAULTS.daily_reminder.message_template;
+  return renderTemplate(template, {
+    name_block: String(fullName || '').trim() ? `, <b>${String(fullName).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>` : '',
+    today: new Date(now).toLocaleDateString('uz-UZ', { timeZone: TASHKENT_TIME_ZONE }),
+  });
+}
+
+function buildDebtReminderText(setting, debt, targetDate, now = new Date()) {
+  const template = setting?.message_template || NOTIFICATION_DEFAULTS.debt_reminder.message_template;
+  return renderTemplate(template, {
+    day_label: targetDate && uzDateKey(targetDate) === uzDateKey(now) ? 'Bugun' : 'Eslatma',
+    person_name: String(debt.person_name || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    amount: Number(debt.amount || 0).toLocaleString('ru-RU'),
+    direction: debt.direction === 'payable' ? 'Siz qaytarishingiz kerak' : 'Sizga qaytishi kerak',
+    when: targetDate ? toUzDateTime(targetDate) : 'belgilangan vaqt',
+    note_block: debt.note ? `
+📝 ${String(debt.note).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}` : '',
+  });
 }
 
 function getTashkentParts(value = new Date()) {
@@ -71,9 +186,12 @@ function uzDayStartUtcIso(value = new Date()) {
   return new Date(Date.UTC(p.year, p.month - 1, p.day, -5, 0, 0, 0)).toISOString();
 }
 
-function isDailyReminderWindow(value = new Date()) {
+function isDailyReminderWindow(value = new Date(), sendTime = '09:00', windowMinutes = 5) {
   const p = getTashkentParts(value);
-  return p.hour === 9 && p.minute < 5;
+  const [hh, mm] = normalizeNotifTime(sendTime, '09:00').split(':').map(Number);
+  const currentMinutes = p.hour * 60 + p.minute;
+  const targetMinutes = hh * 60 + mm;
+  return currentMinutes >= targetMinutes && currentMinutes < targetMinutes + Number(windowMinutes || 5);
 }
 
 function dueTarget(debt) {
@@ -87,17 +205,6 @@ function toUzDateTime(value) {
   } catch {
     return new Date(value).toLocaleString('uz-UZ');
   }
-}
-
-function buildDailyReminderText(fullName = '') {
-  const greetingName = String(fullName || '').trim();
-  const safeName = greetingName ? `, <b>${greetingName}</b>` : '';
-  return `🌤 <b>Assalamu aleykum${safeName}</b>
-
-Bugungi xarajatlarni kiritib borishni unutmang.
-💸 Kirim, chiqim, qarz va rejalaringizni yozsangiz — men ularni tartibli saqlab boraman.
-
-🤝 <i>24/7 xizmatingizda man!</i>`;
 }
 
 async function fetchUsersForDailyReminder(dayStartIso) {
@@ -131,14 +238,24 @@ async function markDailyReminderSent(userId, nowIso) {
 }
 
 async function processDailyReminders(now) {
+  const settings = await getNotificationSettings();
+  const dailySetting = settings.daily_reminder || mergeNotificationSetting('daily_reminder');
+  const sendTime = dailySetting.send_time || '09:00';
+  const windowMinutes = Number(dailySetting?.config?.window_minutes || 5);
+
   const result = {
     checked: 0,
     sent: 0,
     failed: [],
     todayKey: uzDateKey(now),
-    scheduled_for: '09:00 Asia/Tashkent',
-    window_open: isDailyReminderWindow(now),
+    scheduled_for: `${sendTime} ${dailySetting.timezone || TASHKENT_TIME_ZONE}`,
+    window_open: isDailyReminderWindow(now, sendTime, windowMinutes),
   };
+
+  if (dailySetting.enabled === false) {
+    result.note = 'daily reminder disabled';
+    return result;
+  }
 
   if (!result.window_open) {
     result.note = 'outside daily reminder window';
@@ -166,20 +283,45 @@ async function processDailyReminders(now) {
   result.checked = rows.length;
 
   for (const row of rows) {
+    const html = buildDailyReminderText(dailySetting, row.full_name, now);
     try {
-      await bot.sendMessage(row.user_id, buildDailyReminderText(row.full_name), { parse_mode: 'HTML' });
+      await bot.sendMessage(row.user_id, html, { parse_mode: 'HTML' });
       await markDailyReminderSent(row.user_id, nowIso);
+      await insertNotificationLog({
+        setting_key: 'daily_reminder',
+        user_id: row.user_id,
+        status: 'sent',
+        message_text: html,
+        sent_at: nowIso,
+        meta: { send_time: sendTime }
+      });
       result.sent += 1;
     } catch (err) {
       result.failed.push({ user_id: row.user_id, error: err?.message || 'send failed' });
+      await insertNotificationLog({
+        setting_key: 'daily_reminder',
+        user_id: row.user_id,
+        status: 'failed',
+        message_text: html,
+        error_text: err?.message || 'send failed',
+        sent_at: nowIso,
+        meta: { send_time: sendTime }
+      });
     }
   }
 
+  if (result.sent > 0) await touchNotificationSetting('daily_reminder', { last_sent_at: nowIso });
   return result;
 }
 
 async function processDebtReminders(now) {
-  const nowIso = now.toISOString();
+  const settings = await getNotificationSettings();
+  const debtSetting = settings.debt_reminder || mergeNotificationSetting('debt_reminder');
+
+  if (debtSetting.enabled === false) {
+    return { checked: 0, due: 0, sent: 0, failed: [], note: 'debt reminder disabled' };
+  }
+
   const { data, error } = await db
     .from('debts')
     .select('id, user_id, person_name, amount, direction, due_at, remind_at, note, reminder_sent_at, status, created_at')
@@ -209,28 +351,35 @@ async function processDebtReminders(now) {
   for (const debt of dueItems) {
     const target = dueTarget(debt);
     const targetDate = target ? new Date(target) : null;
-    const dayLabel = targetDate && uzDateKey(targetDate) === uzDateKey(now)
-      ? 'Bugun'
-      : 'Eslatma';
-    const direction = debt.direction === 'payable' ? 'Siz qaytarishingiz kerak' : 'Sizga qaytishi kerak';
-    const when = targetDate ? toUzDateTime(targetDate) : 'belgilangan vaqt';
-    const text = `⏰ <b>Qarz eslatmasi</b>
-
-${dayLabel} <b>${debt.person_name}</b> bilan bog'liq qarz vaqti yetdi.
-💰 ${Number(debt.amount || 0).toLocaleString('ru-RU')} so'm
-📌 ${direction}
-🕒 ${when}${debt.note ? `
-📝 ${debt.note}` : ''}`;
+    const text = buildDebtReminderText(debtSetting, debt, targetDate, now);
 
     try {
       await bot.sendMessage(debt.user_id, text, { parse_mode: 'HTML' });
-      await db.from('debts').update({ reminder_sent_at: nowIso }).eq('id', debt.id).eq('user_id', debt.user_id);
+      await db.from('debts').update({ reminder_sent_at: now.toISOString() }).eq('id', debt.id).eq('user_id', debt.user_id);
+      await insertNotificationLog({
+        setting_key: 'debt_reminder',
+        user_id: debt.user_id,
+        status: 'sent',
+        message_text: text,
+        sent_at: now.toISOString(),
+        meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null }
+      });
       sent += 1;
     } catch (err) {
       failed.push({ id: debt.id, user_id: debt.user_id, error: err?.message || 'send failed' });
+      await insertNotificationLog({
+        setting_key: 'debt_reminder',
+        user_id: debt.user_id,
+        status: 'failed',
+        message_text: text,
+        error_text: err?.message || 'send failed',
+        sent_at: now.toISOString(),
+        meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null }
+      });
     }
   }
 
+  if (sent > 0) await touchNotificationSetting('debt_reminder', { last_sent_at: now.toISOString() });
   return { checked: (data || []).length, due: dueItems.length, sent, failed };
 }
 
