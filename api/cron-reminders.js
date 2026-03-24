@@ -9,6 +9,8 @@ const SUPA_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_K
 const CRON_SECRET = process.env.CRON_SECRET;
 const TASHKENT_TIME_ZONE = 'Asia/Tashkent';
 const DEFAULT_CRON_INTERVAL_MINUTES = 30;
+const DEBT_REMINDER_BATCH_SIZE = 300;
+const DEBT_REMINDER_SCAN_LIMIT = 5000;
 
 const NOTIFICATION_DEFAULTS = {
   daily_reminder: {
@@ -84,6 +86,14 @@ function missingColumn(error, column) {
     msg.includes('unknown column') ||
     msg.includes('could not find the column')
   );
+}
+
+function getCronRequestSecret(req) {
+  return req.headers?.['x-cron-secret']
+    || req.headers?.['x-internal-secret']
+    || req.headers?.authorization
+    || req.headers?.Authorization
+    || '';
 }
 
 
@@ -389,6 +399,44 @@ async function markDailyReportSent(userId, nowIso) {
   return result;
 }
 
+async function fetchOpenDebtsPage({ from = 0, to = DEBT_REMINDER_BATCH_SIZE - 1 } = {}) {
+  return db
+    .from('debts')
+    .select('id, user_id, person_name, amount, direction, due_at, remind_at, note, reminder_sent_at, status, created_at')
+    .eq('status', 'open')
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
+    .range(from, to);
+}
+
+async function claimDebtReminder(debt, claimIso) {
+  const result = await db
+    .from('debts')
+    .update({ reminder_sent_at: claimIso })
+    .eq('id', debt.id)
+    .eq('user_id', debt.user_id)
+    .is('reminder_sent_at', null)
+    .select('id')
+    .maybeSingle();
+
+  if (result.error) throw result.error;
+  return !!result.data;
+}
+
+async function releaseDebtReminderClaim(debt, claimIso) {
+  let result = await db
+    .from('debts')
+    .update({ reminder_sent_at: null })
+    .eq('id', debt.id)
+    .eq('user_id', debt.user_id)
+    .eq('reminder_sent_at', claimIso);
+
+  if (result.error && missingColumn(result.error, 'reminder_sent_at')) {
+    return { error: null };
+  }
+  return result;
+}
+
 async function processDailyReminders(now, meta = {}) {
   const settings = await getNotificationSettings();
   const dailySetting = settings.daily_reminder || mergeNotificationSetting('daily_reminder');
@@ -635,74 +683,94 @@ async function processDebtReminders(now) {
   const debtSetting = settings.debt_reminder || mergeNotificationSetting('debt_reminder');
 
   if (debtSetting.enabled === false) {
-    return { checked: 0, due: 0, sent: 0, failed: [], note: 'debt reminder disabled' };
+    return { checked: 0, due: 0, sent: 0, skipped: 0, failed: [], note: 'debt reminder disabled' };
   }
 
-  const { data, error } = await db
-    .from('debts')
-    .select('id, user_id, person_name, amount, direction, due_at, remind_at, note, reminder_sent_at, status, created_at')
-    .eq('status', 'open')
-    .order('created_at', { ascending: true })
-    .limit(300);
+  const result = { checked: 0, due: 0, sent: 0, skipped: 0, failed: [] };
+  const nowIso = now.toISOString();
+  let from = 0;
+  let scanned = 0;
 
-  if (error) {
-    if (relationMissing(error, 'debts')) {
-      return { checked: 0, due: 0, sent: 0, failed: [], note: 'debts table missing' };
+  while (scanned < DEBT_REMINDER_SCAN_LIMIT) {
+    const to = from + DEBT_REMINDER_BATCH_SIZE - 1;
+    const { data, error } = await fetchOpenDebtsPage({ from, to });
+
+    if (error) {
+      if (relationMissing(error, 'debts')) {
+        return { checked: 0, due: 0, sent: 0, skipped: 0, failed: [], note: 'debts table missing' };
+      }
+      throw error;
     }
-    throw error;
-  }
 
-  const dueItems = (data || []).filter((debt) => {
-    if (debt.status !== 'open') return false;
-    if (debt.reminder_sent_at) return false;
-    const target = dueTarget(debt);
-    if (!target) return false;
-    const ts = new Date(target).getTime();
-    return Number.isFinite(ts) && ts <= now.getTime();
-  });
+    const page = data || [];
+    if (!page.length) break;
 
-  let sent = 0;
-  const failed = [];
+    scanned += page.length;
+    result.checked += page.length;
 
-  for (const debt of dueItems) {
-    const target = dueTarget(debt);
-    const targetDate = target ? new Date(target) : null;
-    const text = buildDebtReminderText(debtSetting, debt, targetDate, now);
+    const dueItems = page.filter((debt) => {
+      if (debt.status !== 'open') return false;
+      if (debt.reminder_sent_at) return false;
+      const target = dueTarget(debt);
+      if (!target) return false;
+      const ts = new Date(target).getTime();
+      return Number.isFinite(ts) && ts <= now.getTime();
+    });
 
-    try {
-      await bot.sendMessage(debt.user_id, text, { parse_mode: 'HTML' });
-      await db.from('debts').update({ reminder_sent_at: now.toISOString() }).eq('id', debt.id).eq('user_id', debt.user_id);
-      await insertNotificationLog({
-        setting_key: 'debt_reminder',
-        user_id: debt.user_id,
-        status: 'sent',
-        message_text: text,
-        sent_at: now.toISOString(),
-        meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null }
-      });
-      sent += 1;
-    } catch (err) {
-      failed.push({ id: debt.id, user_id: debt.user_id, error: err?.message || 'send failed' });
-      await insertNotificationLog({
-        setting_key: 'debt_reminder',
-        user_id: debt.user_id,
-        status: 'failed',
-        message_text: text,
-        error_text: err?.message || 'send failed',
-        sent_at: now.toISOString(),
-        meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null }
-      });
+    result.due += dueItems.length;
+
+    for (const debt of dueItems) {
+      const target = dueTarget(debt);
+      const targetDate = target ? new Date(target) : null;
+      const text = buildDebtReminderText(debtSetting, debt, targetDate, now);
+
+      try {
+        const claimed = await claimDebtReminder(debt, nowIso);
+        if (!claimed) {
+          result.skipped += 1;
+          continue;
+        }
+
+        await bot.sendMessage(debt.user_id, text, { parse_mode: 'HTML' });
+        await insertNotificationLog({
+          setting_key: 'debt_reminder',
+          user_id: debt.user_id,
+          status: 'sent',
+          message_text: text,
+          sent_at: nowIso,
+          meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null }
+        });
+        result.sent += 1;
+      } catch (err) {
+        result.failed.push({ id: debt.id, user_id: debt.user_id, error: err?.message || 'send failed' });
+        try {
+          await releaseDebtReminderClaim(debt, nowIso);
+        } catch (_) { }
+        await insertNotificationLog({
+          setting_key: 'debt_reminder',
+          user_id: debt.user_id,
+          status: 'failed',
+          message_text: text,
+          error_text: err?.message || 'send failed',
+          sent_at: nowIso,
+          meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null }
+        });
+      }
     }
+
+    if (page.length < DEBT_REMINDER_BATCH_SIZE) break;
+    from += DEBT_REMINDER_BATCH_SIZE;
   }
 
-  if (sent > 0) await touchNotificationSetting('debt_reminder', { last_sent_at: now.toISOString() });
-  return { checked: (data || []).length, due: dueItems.length, sent, failed };
+  if (result.sent > 0) await touchNotificationSetting('debt_reminder', { last_sent_at: nowIso });
+  if (scanned >= DEBT_REMINDER_SCAN_LIMIT) result.note = `scan limit reached (${DEBT_REMINDER_SCAN_LIMIT})`;
+  return result;
 }
 
 module.exports = async (req, res) => {
   try {
-    const auth = req.headers?.authorization || req.headers?.Authorization || '';
-    if (CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+    const auth = getCronRequestSecret(req);
+    if (CRON_SECRET && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
       return res.status(401).json({ ok: false, error: 'Unauthorized' });
     }
 

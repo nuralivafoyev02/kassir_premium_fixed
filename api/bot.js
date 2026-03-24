@@ -1790,6 +1790,20 @@ module.exports = async (req, res) => {
     return res.status(200).send('Kassa Bot ishlayapti 🚀');
   }
 
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET
+    || process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN
+    || process.env.BOT_WEBHOOK_SECRET
+    || process.env.WEBHOOK_SECRET
+    || '';
+  if (webhookSecret) {
+    const headerSecret = req.headers?.['x-telegram-bot-api-secret-token']
+      || req.headers?.['X-Telegram-Bot-Api-Secret-Token']
+      || '';
+    if (headerSecret !== webhookSecret) {
+      return res.status(401).json({ ok: false, error: 'Unauthorized' });
+    }
+  }
+
   try {
     const update = req.body || {};
 
