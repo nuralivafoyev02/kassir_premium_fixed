@@ -3,6 +3,7 @@
 ## Qisqacha
 
 Bu relizda loyiha ichiga markaziy Telegram logging tizimi qo'shildi va yangi foydalanuvchi muvaffaqiyatli ro'yxatdan o'tganda adminga notify yuborish oqimi qo'shildi.
+Keyingi yangilanishda `LOG_LEVEL` ko'p qiymatli formatni ham qabul qiladigan bo'ldi va `/start` triggerlari uchun ham `SUCCESS` log qo'shildi.
 
 ## Topilgan muammolar
 
@@ -32,6 +33,9 @@ Bu relizda loyiha ichiga markaziy Telegram logging tizimi qo'shildi va yangi foy
 
 - Markaziy Telegram logger util yaratildi.
 - `ERROR`, `SUCCESS`, `INFO` level'lari qo'shildi.
+- `LOG_LEVEL=ERROR,SUCCESS,INFO` kabi ko'p qiymatli format ham qo'llab-quvvatlanadi.
+- Bitta qiymat berilsa eski threshold xulqi saqlanadi.
+- `SUCCES` yozilgan bo'lsa ham `SUCCESS` sifatida qabul qilinadi.
 - Pretty JSON formatting qo'shildi.
 - Uzun payloadlar xavfsiz chunklarga bo'linadigan qilindi.
 - `token`, `secret`, `authorization`, `cookie`, `api_key`, `service_role`, `bot_token`, `openai_key` va shunga o'xshash maxfiy maydonlar `[REDACTED]` qilinadigan bo'ldi.
@@ -52,9 +56,13 @@ Bu relizda loyiha ichiga markaziy Telegram logging tizimi qo'shildi va yangi foy
   - vaqt o'zgartirish
   - default reset
   - matn yangilash
+- `/admin`, `/notif`, `/notif help`, `/notif test` uchun ham `INFO` loglar qo'shildi.
 - Yangi user contact yuborib muvaffaqiyatli ro'yxatdan o'tsa:
   - `SUCCESS` log yuboriladi
   - adminga alohida notify yuboriladi
+- `/start` bosganlar uchun ham `SUCCESS` log qo'shildi:
+  - yangi user bo'lsa kontakt so'rovi yuborilgani
+  - ro'yxatdan o'tgan user bo'lsa start greeting yuborilgani
 - Notify faqat haqiqiy yangi user uchun ishlaydi.
 
 ### `api/cron-reminders.js`
@@ -79,6 +87,7 @@ Bu relizda loyiha ichiga markaziy Telegram logging tizimi qo'shildi va yangi foy
 - `TELEGRAM_LOGGING_ENABLED=true`
 - `LOG_CHANNEL_ID=<telegram kanal id>`
 - `LOG_LEVEL=SUCCESS`
+- yoki `LOG_LEVEL=ERROR,SUCCESS,INFO`
 - `LOCAL_LOG_LEVEL=ERROR`
 - `ADMIN_NOTIFY_CHAT_ID=<admin chat id>`
 - `CLIENT_CONSOLE_LOGS_ENABLED=false`
@@ -139,6 +148,9 @@ Adminga yuboriladigan xabar:
 
 1. `LOG_CHANNEL_ID` va `TELEGRAM_LOGGING_ENABLED=true` bilan bitta test error log yuborilishini tekshiring.
 2. `LOG_LEVEL=SUCCESS` holatida cron summary logi kelishini tekshiring.
+2.1 `LOG_LEVEL=ERROR,SUCCESS,INFO` holatida `/admin` yoki `/notif` berib `INFO` log tushishini tekshiring.
 3. Mutlaqo yangi user `/start` + contact yuborganda admin notify kelishini tekshiring.
+3.1 Yangi user `/start` bosganda `SUCCESS` log, contact yuborganda yana `SUCCESS` log kelishini tekshiring.
+3.2 Eski user `/start` bosganda `SUCCESS` log kelishini tekshiring.
 4. Eski user qayta contact yuborganda admin notify qayta ketmasligini tekshiring.
 5. Kanalga tushgan loglarda secret/token chiqmayotganini tekshiring.

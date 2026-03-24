@@ -2217,6 +2217,12 @@ module.exports = async (req, res) => {
 
       try {
         await sendAdminPanel(chatId);
+        void appLogger.info({
+          scope: 'admin-open',
+          ...buildUserLogContext(msg, user),
+          message: 'Admin panel ochildi',
+          payload: { source: '/admin' },
+        });
       } catch (e) {
         await bot.sendMessage(chatId, `⚠️ Admin panelni ochishda xatolik: ${esc(tgErr(e))}`, { parse_mode: 'HTML' }).catch(() => { });
       }
@@ -2237,11 +2243,23 @@ module.exports = async (req, res) => {
       try {
         if (!sub || sub === 'list') {
           await sendNotificationPanel(chatId);
+          void appLogger.info({
+            scope: 'notif-panel',
+            ...buildUserLogContext(msg, user),
+            message: 'Notification panel ochildi',
+            payload: { source: '/notif' },
+          });
           return res.status(200).json({ ok: true });
         }
 
         if (sub === 'help') {
           await bot.sendMessage(chatId, buildNotificationHelpText(), { parse_mode: 'HTML' }).catch(() => { });
+          void appLogger.info({
+            scope: 'notif-help',
+            ...buildUserLogContext(msg, user),
+            message: "Notification qo'llanmasi ochildi",
+            payload: { source: '/notif help' },
+          });
           return res.status(200).json({ ok: true });
         }
 
@@ -2316,6 +2334,12 @@ module.exports = async (req, res) => {
             return res.status(200).json({ ok: true });
           }
           await sendNotificationPreview(chatId, key);
+          void appLogger.info({
+            scope: 'notif-test',
+            ...buildUserLogContext(msg, user),
+            message: 'Notification preview yuborildi',
+            payload: { key },
+          });
           return res.status(200).json({ ok: true });
         }
 
@@ -2430,6 +2454,18 @@ module.exports = async (req, res) => {
 
     // ── Yangi foydalanuvchi — telefon so'rash ──
     if (!user) {
+      if (text === '/start') {
+        void appLogger.success({
+          scope: 'start-new-user',
+          ...buildUserLogContext(msg, null),
+          message: "Yangi foydalanuvchiga /start bo'yicha telefon so'rovi yuborildi",
+          payload: {
+            source: 'bot /start',
+            registered: false,
+            contact_requested: true,
+          },
+        });
+      }
       await bot.sendMessage(chatId, `👋 Assalomu alaykum!\nBotdan foydalanish uchun telefon raqamingizni tasdiqlang.`, {
         reply_markup: {
           keyboard: [[{ text: '📱 Telefon raqamni yuborish', request_contact: true }]],
@@ -2456,6 +2492,16 @@ module.exports = async (req, res) => {
       if (isNew) {
         await db.from('users').update({ last_start_date: iso() }).eq('user_id', userId);
       }
+      void appLogger.success({
+        scope: 'start',
+        ...buildUserLogContext(msg, user),
+        message: "Foydalanuvchi /start bosdi",
+        payload: {
+          source: 'bot /start',
+          first_start_today: isNew,
+          registered: true,
+        },
+      });
       return res.status(200).json({ ok: true });
     }
 
