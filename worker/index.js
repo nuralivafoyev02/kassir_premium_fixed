@@ -19,17 +19,6 @@ function js(code, status = 200) {
   });
 }
 
-function text(body, status = 200, extraHeaders = {}) {
-  return new Response(body, {
-    status,
-    headers: {
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "no-store",
-      ...extraHeaders,
-    },
-  });
-}
-
 function esc(v) {
   return String(v ?? "")
     .replace(/&/g, "&amp;")
@@ -300,6 +289,169 @@ async function processDueNotifications(env, meta = {}) {
   return result;
 }
 
+/* =========================
+   Legacy /api/bot adapter
+========================= */
+
+const HANDLER_LOADERS = {
+  bot: () => import("../api/bot.js"),
+};
+
+async function getLegacyHandler(name) {
+  const loader = HANDLER_LOADERS[name];
+  if (!loader) throw new Error(`Unknown legacy handler: ${name}`);
+
+  const mod = await loader();
+  const handler = mod?.default || mod?.handler || mod;
+
+  if (typeof handler !== "function") {
+    throw new Error(`Legacy handler is not a function: ${name}`);
+  }
+
+  return handler;
+}
+
+async function buildLegacyReq(request, env) {
+  const url = new URL(request.url);
+  const contentType = request.headers.get("content-type") || "";
+  const rawBody = ["GET", "HEAD"].includes(request.method) ? "" : await request.text();
+
+  let body = undefined;
+  if (rawBody) {
+    if (contentType.includes("application/json")) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        body = {};
+      }
+    } else if (contentType.includes("application/x-www-form-urlencoded")) {
+      body = Object.fromEntries(new URLSearchParams(rawBody).entries());
+    } else {
+      body = rawBody;
+    }
+  }
+
+  const headersObject = Object.fromEntries(request.headers.entries());
+
+  return {
+    method: request.method,
+    url: request.url,
+    path: url.pathname,
+    query: Object.fromEntries(url.searchParams.entries()),
+    headers: headersObject,
+    body,
+    rawBody,
+    env,
+    cf: request.cf || null,
+  };
+}
+
+function createLegacyRes(resolve) {
+  let statusCode = 200;
+  const headers = new Headers();
+  let finished = false;
+
+  function finish(payload = "") {
+    if (finished) return;
+    finished = true;
+    resolve(
+      new Response(payload, {
+        status: statusCode,
+        headers,
+      })
+    );
+  }
+
+  return {
+    get finished() {
+      return finished;
+    },
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    setHeader(name, value) {
+      headers.set(name, value);
+      return this;
+    },
+    getHeader(name) {
+      return headers.get(name);
+    },
+    removeHeader(name) {
+      headers.delete(name);
+      return this;
+    },
+    json(payload) {
+      if (!headers.has("content-type")) {
+        headers.set("content-type", "application/json; charset=utf-8");
+      }
+      finish(JSON.stringify(payload));
+    },
+    send(payload = "") {
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !(payload instanceof ArrayBuffer) &&
+        !(payload instanceof Uint8Array) &&
+        !(payload instanceof ReadableStream)
+      ) {
+        if (!headers.has("content-type")) {
+          headers.set("content-type", "application/json; charset=utf-8");
+        }
+        finish(JSON.stringify(payload));
+        return;
+      }
+
+      finish(payload ?? "");
+    },
+    end(payload = "") {
+      finish(payload);
+    },
+    redirect(location, code = 302) {
+      statusCode = code;
+      headers.set("location", location);
+      finish("");
+    },
+  };
+}
+
+async function invokeLegacyHandler(name, request, env) {
+  const handler = await getLegacyHandler(name);
+  const req = await buildLegacyReq(request, env);
+
+  return await new Promise(async (resolve, reject) => {
+    const res = createLegacyRes(resolve);
+
+    try {
+      const maybeResult = await handler(req, res, env);
+
+      if (res.finished) return;
+
+      if (maybeResult instanceof Response) {
+        resolve(maybeResult);
+        return;
+      }
+
+      if (typeof maybeResult !== "undefined") {
+        if (typeof maybeResult === "object") {
+          resolve(json(maybeResult));
+        } else {
+          resolve(new Response(String(maybeResult)));
+        }
+        return;
+      }
+
+      resolve(new Response(null, { status: 204 }));
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+/* =========================
+   Current routes
+========================= */
+
 async function handleHealth(env) {
   return json({
     ok: true,
@@ -546,10 +698,17 @@ export default {
         return handleClientLog(request);
       }
 
+      // Telegram webhook
+      if (url.pathname === "/api/bot") {
+        return invokeLegacyHandler("bot", request, env);
+      }
+
+      // Mini app notification
       if (url.pathname === "/api/notify-miniapp-tx") {
         return handleNotifyMiniAppTx(request, env);
       }
 
+      // Notification APIs
       if (url.pathname === "/api/notifications/schedule") {
         return handleScheduleNotification(request, env);
       }
@@ -562,6 +721,7 @@ export default {
         return handleTestNotification(request, env);
       }
 
+      // Manual cron trigger
       if (url.pathname === "/api/cron-reminders") {
         return handleManualCronRun(request, env);
       }
