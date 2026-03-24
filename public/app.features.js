@@ -1364,10 +1364,17 @@
 
     const originalSubmitFlow = submitFlow;
     submitFlow = async function submitFlowEnhanced(...args) {
-      const before = snapshotPlanSpend();
+      const txType = draft?.type || '';
+      const before = txType === 'expense' ? snapshotPlanSpend() : null;
       const result = await originalSubmitFlow.apply(this, args);
-      renderPlans();
-      notifyPlanThresholdCrossing(before);
+      if (txType === 'expense') {
+        try {
+          renderPlans();
+          notifyPlanThresholdCrossing(before || {});
+        } catch (error) {
+          console.warn('[submitFlowEnhanced:plan]', error);
+        }
+      }
       return result;
     };
 

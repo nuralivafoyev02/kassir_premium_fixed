@@ -140,6 +140,7 @@ let selCatIdx = null;
 let selCatType = null;
 let selIcon = 'star';
 let draft = {};
+let newCatType = null;
 let inputCur = 'UZS';
 let pinMode = 'unlock';
 let pinBuf = '';
@@ -481,6 +482,20 @@ function showErr(msg, dur = 4000) {
   el.textContent = msg;
   el.style.display = 'block';
   setTimeout(() => { el.style.display = 'none'; }, dur);
+}
+
+function errorText(error, fallback = '') {
+  if (!error) return fallback || 'Unknown error';
+  if (typeof error === 'string') return error;
+  if (typeof error?.message === 'string' && error.message.trim()) return error.message.trim();
+  if (typeof error?.details === 'string' && error.details.trim()) return error.details.trim();
+  if (typeof error?.hint === 'string' && error.hint.trim()) return error.hint.trim();
+  if (typeof error?.error_description === 'string' && error.error_description.trim()) return error.error_description.trim();
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== '{}') return serialized;
+  } catch (_) { }
+  return fallback || 'Unknown error';
 }
 
 function getTgUser() {
@@ -1419,52 +1434,62 @@ function clearRec() {
 
 async function submitFlow() {
   vib('heavy');
-  // Bo'shliqli formatlangan qiymatdan sof raqam olish
-  const raw = getCleanAmount($('amt-in')?.value || '');
-  if (!raw || !draft.category) {
-    showErr(tt('err_amount_required', 'Summa kiritilmagan!'));
-    return;
-  }
-
-  let amount = Math.round(raw);
-  let note = '';
-  if (inputCur === 'USD') { amount = Math.round(raw * rate); note = ` ($${raw})`; }
-
-  let recUrl = null;
-  if ((draft.receiptBlob || draft.rawFile) && db) {
-    try { recUrl = await uploadReceipt(draft.receiptBlob || draft.rawFile); }
-    catch (err) { console.warn('[submitFlow:receipt]', err); }
-  }
-
-  const newTx = {
-    user_id: UID, amount, category: draft.category + note,
-    type: draft.type, date: isoNow(), receipt_url: recUrl,
-  };
-
-  const tempId = Date.now();
-  txList.unshift(normTx({ ...newTx, id: tempId, receipt: draft.receipt }));
-  renderAll();
-
-  const amtStr = inputCur === 'USD' ? `$${raw} → ${fmt(amount)} ${tt('suffix_uzs', "so'm")}` : `${fmt(amount)} ${tt('suffix_uzs', "so'm")}`;
-  addMsg(`✅ <b>${escapeHtml(tt('tx_saved_label', 'Saqlandi'))}:</b> ${amtStr}<br><small style="opacity:.6">${escapeHtml(draft.category + note)}</small>`);
-
-  $('amt-in').value = '';
-  if (inputCur === 'USD') toggleCur();
-  const localReceipt = draft.receipt;
-  cancelFlow();
-
-  if (db) {
-    const { data, error } = await insertTransactions([newTx], 'mini_app');
-    if (error) {
-      txList = txList.filter(t => t.id !== tempId);
-      renderAll();
-      showErr(tt('err_save_failed', 'Saqlashda xatolik') + ': ' + error.message);
+  let tempId = null;
+  try {
+    // Bo'shliqli formatlangan qiymatdan sof raqam olish
+    const raw = getCleanAmount($('amt-in')?.value || '');
+    if (!raw || !draft.category) {
+      showErr(tt('err_amount_required', 'Summa kiritilmagan!'));
       return;
     }
-    const saved = Array.isArray(data) ? data[0] : data;
-    const i = txList.findIndex(t => t.id === tempId);
-    if (i !== -1 && saved) txList[i] = normTx({ ...txList[i], ...saved, receipt: localReceipt });
-    if (saved) await notifyMiniAppTxSaved({ ...saved, receipt: localReceipt, source: 'mini_app' });
+
+    let amount = Math.round(raw);
+    let note = '';
+    if (inputCur === 'USD') { amount = Math.round(raw * rate); note = ` ($${raw})`; }
+
+    let recUrl = null;
+    if ((draft.receiptBlob || draft.rawFile) && db) {
+      try { recUrl = await uploadReceipt(draft.receiptBlob || draft.rawFile); }
+      catch (err) { console.warn('[submitFlow:receipt]', err); }
+    }
+
+    const newTx = {
+      user_id: UID, amount, category: draft.category + note,
+      type: draft.type, date: isoNow(), receipt_url: recUrl,
+    };
+
+    tempId = Date.now();
+    txList.unshift(normTx({ ...newTx, id: tempId, receipt: draft.receipt }));
+    renderAll();
+
+    const amtStr = inputCur === 'USD' ? `$${raw} → ${fmt(amount)} ${tt('suffix_uzs', "so'm")}` : `${fmt(amount)} ${tt('suffix_uzs', "so'm")}`;
+    addMsg(`✅ <b>${escapeHtml(tt('tx_saved_label', 'Saqlandi'))}:</b> ${amtStr}<br><small style="opacity:.6">${escapeHtml(draft.category + note)}</small>`);
+
+    $('amt-in').value = '';
+    if (inputCur === 'USD') toggleCur();
+    const localReceipt = draft.receipt;
+    cancelFlow();
+
+    if (db) {
+      const { data, error } = await insertTransactions([newTx], 'mini_app');
+      if (error) {
+        txList = txList.filter(t => t.id !== tempId);
+        renderAll();
+        showErr(tt('err_save_failed', 'Saqlashda xatolik') + ': ' + errorText(error, tt('err_save_failed', 'Saqlashda xatolik')));
+        return;
+      }
+      const saved = Array.isArray(data) ? data[0] : data;
+      const i = txList.findIndex(t => t.id === tempId);
+      if (i !== -1 && saved) txList[i] = normTx({ ...txList[i], ...saved, receipt: localReceipt });
+      if (saved) await notifyMiniAppTxSaved({ ...saved, receipt: localReceipt, source: 'mini_app' });
+    }
+  } catch (error) {
+    console.warn('[submitFlow]', error);
+    if (tempId !== null) {
+      txList = txList.filter(t => t.id !== tempId);
+      renderAll();
+    }
+    showErr(tt('err_save_failed', 'Saqlashda xatolik') + ': ' + errorText(error, 'Unknown error'));
   }
 }
 
@@ -1500,7 +1525,8 @@ function buildIconGrid() {
   });
 }
 
-function openAddCat() {
+function openAddCat(typeOverride = null) {
+  newCatType = typeOverride || newCatType || draft.type || stgCatType || 'expense';
   $('nc-name').value = '';
   selIcon = 'star';
   buildIconGrid();
@@ -1516,33 +1542,34 @@ function openAddCat() {
 
 async function saveNewCat() {
   const name = $('nc-name')?.value.trim();
+  const targetType = newCatType || draft.type || stgCatType || '';
   if (!name) {
     showErr(t('err_cat_name_required'));
     return;
   }
-  if (!draft.type) {
+  if (!targetType) {
     showErr(t('err_cat_type_missing'));
     return;
   }
-  const payload = { user_id: UID, name, icon: selIcon, type: draft.type };
+  const payload = { user_id: UID, name, icon: selIcon, type: targetType };
 
   if (db) {
     // .single() RLS yoki 0 qator qaytishi bilan PGRST116 beradi; insert bo‘lsa ham xato ko‘rinadi
     const { data, error } = await db.from('categories').insert([payload]).select();
     if (error) {
       console.warn('[saveNewCat]', error);
-      showErr(t('err_cat_save') + (error.message ? ': ' + error.message : ''));
+      showErr(t('err_cat_save') + ': ' + errorText(error, t('err_cat_save')));
       return;
     }
     const row = Array.isArray(data) ? data[0] : data;
     if (row) {
-      cats[draft.type].push(row);
+      cats[targetType].push(row);
     } else {
       const { data: cd, error: ce } = await db.from('categories').select('*')
         .eq('user_id', UID).order('name');
       if (ce) {
         console.warn('[saveNewCat] refetch', ce);
-        showErr(t('err_cat_save'));
+        showErr(t('err_cat_save') + ': ' + errorText(ce, t('err_cat_save')));
         return;
       }
       if (cd?.length) {
@@ -1551,12 +1578,13 @@ async function saveNewCat() {
       }
     }
   } else {
-    cats[draft.type].push({ ...payload, id: Date.now() });
+    cats[targetType].push({ ...payload, id: Date.now() });
   }
-  cats[draft.type].sort((a, b) => a.name.localeCompare(b.name));
-  buildCatGrid(draft.type);
+  cats[targetType].sort((a, b) => a.name.localeCompare(b.name));
+  buildCatGrid(targetType);
   if ($('stg-sub-cats')?.classList.contains('on')) renderStgCats();
   closeOv('ov-addcat');
+  newCatType = null;
   vib('light');
 }
 
@@ -2600,8 +2628,8 @@ async function delStgCat(idx) {
 }
 
 function openAddCatFromStg() {
-  draft.type = stgCatType;
-  openAddCat();
+  newCatType = stgCatType;
+  openAddCat(stgCatType);
 }
 
 // ─── EXTERNAL LINKS ─────────────────────────────────────
