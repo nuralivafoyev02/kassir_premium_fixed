@@ -178,7 +178,7 @@ function sbMissingColumn(error, column) {
 }
 
 const TASHKENT_TIME_ZONE = "Asia/Tashkent";
-const TASHKENT_UTC_OFFSET_HOURS = 5;
+const DEFAULT_CRON_INTERVAL_MINUTES = 30;
 
 const NOTIFICATION_DEFAULTS = {
   daily_reminder: {
@@ -194,7 +194,7 @@ Bugungi xarajatlarni kiritib borishni unutmang.
 
 📅 Bugun: {{today}}
 🤝 <i>24/7 xizmatingizda man!</i>`,
-    config: { window_minutes: 5 },
+    config: { window_minutes: 5, batch_size: 100, per_run_limit: 10000 },
   },
   debt_reminder: {
     key: "debt_reminder",
@@ -221,9 +221,11 @@ Bugungi xarajatlarni kiritib borishni unutmang.
   },
 };
 
-function getTashkentParts(value = new Date()) {
+function getTimeZoneParts(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
+  const safeTimeZone = String(timeZone || TASHKENT_TIME_ZONE);
+
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TASHKENT_TIME_ZONE,
+    timeZone: safeTimeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -244,137 +246,118 @@ function getTashkentParts(value = new Date()) {
   };
 }
 
-function normalizeNotifTime(value, fallback = "09:00") {
-  const raw = String(value || "").trim();
-  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return fallback;
-  const hh = Number(match[1]);
-  const mm = Number(match[2]);
-  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
-  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+function getTimeZoneOffsetMillis(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
+  const date = new Date(value);
+  const zoned = new Date(date.toLocaleString("en-US", { timeZone: String(timeZone || TASHKENT_TIME_ZONE) }));
+  return zoned.getTime() - date.getTime();
 }
 
-function renderTemplate(template, vars = {}) {
-  return String(template || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => String(vars[key] ?? ""));
-}
-
-function mergeNotificationSetting(rowOrKey, patch = null) {
-  const row = typeof rowOrKey === "string" ? { key: rowOrKey } : (rowOrKey || {});
-  const base = NOTIFICATION_DEFAULTS[row.key] || null;
-  if (!base) return null;
-  return {
-    ...base,
-    ...row,
-    ...(patch || {}),
-    key: base.key,
-    enabled: (patch && typeof patch.enabled === "boolean") ? patch.enabled : (typeof row.enabled === "boolean" ? row.enabled : base.enabled),
-    send_time: (patch && Object.prototype.hasOwnProperty.call(patch, "send_time"))
-      ? (patch.send_time ? normalizeNotifTime(patch.send_time, base.send_time || "09:00") : null)
-      : (row.send_time ? normalizeNotifTime(row.send_time, base.send_time || "09:00") : base.send_time),
-    timezone: String((patch && patch.timezone) ?? row.timezone ?? base.timezone),
-    message_template: (patch && Object.prototype.hasOwnProperty.call(patch, "message_template"))
-      ? patch.message_template
-      : (row.message_template == null ? base.message_template : row.message_template),
-    config: {
-      ...(base.config || {}),
-      ...(row.config || {}),
-      ...((patch && patch.config) || {}),
-    },
-  };
-}
-
-async function sbGetNotificationSettings(env) {
-  try {
-    const rows = await sbFetch(env, `/notification_settings?select=key,title,enabled,send_time,timezone,message_template,config,last_sent_at,updated_at`);
-    const map = {};
-    for (const key of Object.keys(NOTIFICATION_DEFAULTS)) {
-      const row = Array.isArray(rows) ? rows.find((item) => item.key === key) : null;
-      map[key] = mergeNotificationSetting(row || key);
-    }
-    return map;
-  } catch (error) {
-    if (sbMissingTable(error, "notification_settings")) {
-      return Object.fromEntries(Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting(key)]));
-    }
-    throw error;
-  }
-}
-
-async function sbTouchNotificationSetting(env, key, payload = {}) {
-  try {
-    return await sbFetch(env, `/notification_settings?key=eq.${encodeURIComponent(key)}`, {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-        Prefer: "return=minimal",
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (error) {
-    if (sbMissingTable(error, "notification_settings")) return null;
-    throw error;
-  }
-}
-
-async function sbInsertNotificationLog(env, row) {
-  try {
-    return await sbFetch(env, `/notification_logs`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        Prefer: "return=minimal",
-      },
-      body: JSON.stringify(row),
-    });
-  } catch (error) {
-    if (sbMissingTable(error, "notification_logs")) return null;
-    throw error;
-  }
-}
-
-function uzDateKey(value = new Date()) {
-  const p = getTashkentParts(value);
+function dateKeyInZone(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
+  const p = getTimeZoneParts(value, timeZone);
   return `${String(p.year).padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
 }
 
-function uzDayStartUtcIso(value = new Date()) {
-  const p = getTashkentParts(value);
-  return new Date(Date.UTC(p.year, p.month - 1, p.day, -TASHKENT_UTC_OFFSET_HOURS, 0, 0, 0)).toISOString();
+function dayStartUtcIsoInZone(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
+  const p = getTimeZoneParts(value, timeZone);
+  const approxUtc = new Date(Date.UTC(p.year, p.month - 1, p.day, 0, 0, 0, 0));
+  const offsetMs = getTimeZoneOffsetMillis(approxUtc, timeZone);
+  return new Date(approxUtc.getTime() - offsetMs).toISOString();
 }
 
-function isDailyReminderWindow(value = new Date(), sendTime = "09:00", windowMinutes = 5) {
-  const p = getTashkentParts(value);
+function parseCronIntervalMinutes(expression) {
+  const cron = String(expression || "").trim();
+  if (!cron) return null;
+
+  const [minuteField] = cron.split(/\s+/);
+  if (!minuteField) return null;
+  if (minuteField === "*") return 1;
+
+  const stepMatch = minuteField.match(/^\*\/(\d{1,3})$/);
+  if (stepMatch) {
+    const step = Number(stepMatch[1]);
+    return Number.isFinite(step) && step > 0 ? step : null;
+  }
+
+  if (/^\d{1,2}(,\d{1,2})+$/.test(minuteField)) {
+    const values = minuteField
+      .split(",")
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v))
+      .sort((a, b) => a - b);
+
+    if (values.length > 1) {
+      let minDiff = 60;
+      for (let i = 1; i < values.length; i += 1) {
+        minDiff = Math.min(minDiff, values[i] - values[i - 1]);
+      }
+      minDiff = Math.min(minDiff, 60 - values[values.length - 1] + values[0]);
+      return minDiff > 0 ? minDiff : null;
+    }
+  }
+
+  if (/^\d{1,2}$/.test(minuteField)) return 60;
+  return null;
+}
+
+function resolveDailyWindowMinutes(setting, meta = {}) {
+  const baseWindow = Math.max(1, Number(setting?.config?.window_minutes || 5));
+  const configuredInterval = Math.max(0, Number(setting?.config?.cron_interval_minutes || 0));
+  const inferredInterval = Math.max(
+    0,
+    Number(
+      parseCronIntervalMinutes(
+        meta?.cron || meta?.cronExpression || meta?.schedule || meta?.cronSchedule || ""
+      ) || 0
+    )
+  );
+  const effectiveInterval = inferredInterval || configuredInterval || DEFAULT_CRON_INTERVAL_MINUTES;
+  return Math.max(baseWindow, effectiveInterval || baseWindow);
+}
+
+function isDailyReminderWindow(value = new Date(), sendTime = "09:00", windowMinutes = 5, timeZone = TASHKENT_TIME_ZONE) {
+  const p = getTimeZoneParts(value, timeZone);
   const [hh, mm] = normalizeNotifTime(sendTime, "09:00").split(":").map(Number);
   const currentMinutes = p.hour * 60 + p.minute;
   const targetMinutes = hh * 60 + mm;
-  return currentMinutes >= targetMinutes && currentMinutes < targetMinutes + Number(windowMinutes || 5);
+  return currentMinutes >= targetMinutes && currentMinutes < targetMinutes + Math.max(1, Number(windowMinutes || 5));
 }
 
-function toUzDateTime(value) {
+function toUzDateTime(value, timeZone = TASHKENT_TIME_ZONE) {
   if (!value) return "belgilangan vaqt";
   try {
-    return new Date(value).toLocaleString("uz-UZ", { timeZone: TASHKENT_TIME_ZONE });
+    return new Date(value).toLocaleString("uz-UZ", { timeZone: String(timeZone || TASHKENT_TIME_ZONE) });
   } catch {
     return new Date(value).toLocaleString("uz-UZ");
   }
 }
 
+function uzDateKey(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
+  return dateKeyInZone(value, timeZone);
+}
+
+function uzDayStartUtcIso(value = new Date(), timeZone = TASHKENT_TIME_ZONE) {
+  return dayStartUtcIsoInZone(value, timeZone);
+}
+
 function buildDailyReminderText(setting, fullName = "", now = new Date()) {
   const template = setting?.message_template || NOTIFICATION_DEFAULTS.daily_reminder.message_template;
+  const timeZone = setting?.timezone || TASHKENT_TIME_ZONE;
+
   return renderTemplate(template, {
     name_block: String(fullName || "").trim() ? `, <b>${esc(fullName)}</b>` : "",
-    today: esc(new Date(now).toLocaleDateString("uz-UZ", { timeZone: TASHKENT_TIME_ZONE })),
+    today: esc(new Date(now).toLocaleDateString("uz-UZ", { timeZone })),
   });
 }
 
 function buildDebtReminderText(setting, debt, targetDate, now = new Date()) {
   const template = setting?.message_template || NOTIFICATION_DEFAULTS.debt_reminder.message_template;
+  const timeZone = setting?.timezone || TASHKENT_TIME_ZONE;
   const vars = {
-    day_label: targetDate && uzDateKey(targetDate) === uzDateKey(now) ? "Bugun" : "Eslatma",
+    day_label: targetDate && uzDateKey(targetDate, timeZone) === uzDateKey(now, timeZone) ? "Bugun" : "Eslatma",
     person_name: esc(debt.person_name || "Noma'lum"),
     amount: numFmt(debt.amount || 0),
     direction: debt.direction === "payable" ? "Siz qaytarishingiz kerak" : "Sizga qaytishi kerak",
-    when: esc(targetDate ? toUzDateTime(targetDate) : "belgilangan vaqt"),
+    when: esc(targetDate ? toUzDateTime(targetDate, timeZone) : "belgilangan vaqt"),
     note_block: debt.note ? `
 📝 ${esc(debt.note)}` : "",
   };
@@ -572,25 +555,29 @@ async function processDueNotifications(env, meta = {}) {
   return result;
 }
 
-async function fetchUsersForDailyReminder(env, dayStartIso) {
-  const encodedStart = encodeURIComponent(dayStartIso);
+async function fetchUsersForDailyReminderPage(env, dayStartIso, { afterUserId = null, limit = 100 } = {}) {
   const encodedOr = encodeURIComponent(`(last_daily_reminder_at.is.null,last_daily_reminder_at.lt.${dayStartIso})`);
+  const cursor = afterUserId != null ? `&user_id=gt.${encodeURIComponent(afterUserId)}` : "";
 
   try {
-    return await sbFetch(
+    const rows = await sbFetch(
       env,
-      `/users?select=user_id,full_name,daily_reminder_enabled,last_daily_reminder_at&or=${encodedOr}&limit=1000`
+      `/users?select=user_id,full_name,daily_reminder_enabled,last_daily_reminder_at&or=${encodedOr}${cursor}&order=user_id.asc&limit=${limit}`
     );
+    return { rows, migrationRequired: null };
   } catch (error) {
     if (sbMissingColumn(error, "daily_reminder_enabled")) {
-      return await sbFetch(
+      const rows = await sbFetch(
         env,
-        `/users?select=user_id,full_name,last_daily_reminder_at&or=${encodedOr}&limit=1000`
+        `/users?select=user_id,full_name,last_daily_reminder_at&or=${encodedOr}${cursor}&order=user_id.asc&limit=${limit}`
       );
+      return { rows, migrationRequired: null };
     }
+
     if (sbMissingColumn(error, "last_daily_reminder_at")) {
-      return { __migration_required__: "users.last_daily_reminder_at missing", rows: [] };
+      return { rows: [], migrationRequired: "users.last_daily_reminder_at missing" };
     }
+
     throw error;
   }
 }
@@ -614,16 +601,24 @@ async function markDailyReminderSent(env, userId, nowIso) {
 async function processDailyReminders(env, now = new Date(), meta = {}) {
   const settings = await sbGetNotificationSettings(env);
   const dailySetting = settings.daily_reminder || mergeNotificationSetting("daily_reminder");
-  const windowMinutes = Number(dailySetting?.config?.window_minutes || 5);
+
+  const timeZone = dailySetting?.timezone || TASHKENT_TIME_ZONE;
   const sendTime = dailySetting?.send_time || "09:00";
+  const windowMinutes = resolveDailyWindowMinutes(dailySetting, meta);
+
+  const batchSize = Math.max(1, Math.min(1000, Number(dailySetting?.config?.batch_size || 100)));
+  const perRunLimit = Math.max(batchSize, Math.min(50000, Number(dailySetting?.config?.per_run_limit || 10000)));
 
   const result = {
     checked: 0,
     sent: 0,
     failed: [],
-    todayKey: uzDateKey(now),
-    scheduled_for: `${sendTime} ${dailySetting?.timezone || TASHKENT_TIME_ZONE}`,
-    window_open: isDailyReminderWindow(now, sendTime, windowMinutes),
+    todayKey: uzDateKey(now, timeZone),
+    scheduled_for: `${sendTime} ${timeZone}`,
+    window_open: isDailyReminderWindow(now, sendTime, windowMinutes, timeZone),
+    batch_size: batchSize,
+    per_run_limit: perRunLimit,
+    effective_window_minutes: windowMinutes,
   };
 
   if (dailySetting.enabled === false) {
@@ -637,63 +632,97 @@ async function processDailyReminders(env, now = new Date(), meta = {}) {
   }
 
   const nowIso = new Date(now).toISOString();
-  const dayStartIso = uzDayStartUtcIso(now);
+  const dayStartIso = uzDayStartUtcIso(now, timeZone);
 
-  let rows;
-  try {
-    rows = await fetchUsersForDailyReminder(env, dayStartIso);
-  } catch (error) {
-    if (sbMissingTable(error, "users")) {
-      result.note = "users table missing";
+  let lastUserId = null;
+  let totalScanned = 0;
+
+  while (totalScanned < perRunLimit) {
+    const pageLimit = Math.min(batchSize, perRunLimit - totalScanned);
+
+    let page;
+    try {
+      page = await fetchUsersForDailyReminderPage(env, dayStartIso, {
+        afterUserId: lastUserId,
+        limit: pageLimit,
+      });
+    } catch (error) {
+      if (sbMissingTable(error, "users")) {
+        result.note = "users table missing";
+        return result;
+      }
+      throw error;
+    }
+
+    if (page?.migrationRequired) {
+      result.note = page.migrationRequired;
       return result;
     }
-    throw error;
-  }
 
-  if (rows && rows.__migration_required__) {
-    result.note = rows.__migration_required__;
-    return result;
-  }
+    const rawRows = Array.isArray(page?.rows) ? page.rows : [];
+    if (!rawRows.length) break;
 
-  const candidates = (Array.isArray(rows) ? rows : rows?.rows || []).filter(
-    (row) => row && toSafeChatId(row.user_id) && row.daily_reminder_enabled !== false
-  );
+    totalScanned += rawRows.length;
+    lastUserId = rawRows[rawRows.length - 1]?.user_id ?? lastUserId;
 
-  result.checked = candidates.length;
+    const candidates = rawRows.filter(
+      (row) => row && toSafeChatId(row.user_id) && row.daily_reminder_enabled !== false
+    );
 
-  for (const row of candidates) {
-    const html = buildDailyReminderText(dailySetting, row.full_name, now);
-    try {
-      await tgSendMessage(env, row.user_id, html);
-      await markDailyReminderSent(env, row.user_id, nowIso);
-      await sbInsertNotificationLog(env, {
-        setting_key: "daily_reminder",
-        user_id: row.user_id,
-        status: "sent",
-        message_text: html,
-        sent_at: nowIso,
-        meta: { send_time: sendTime, source: meta.source || "manual" },
-      });
-      result.sent += 1;
-    } catch (error) {
-      result.failed.push({
-        user_id: row.user_id,
-        error: error?.message || String(error),
-      });
-      await sbInsertNotificationLog(env, {
-        setting_key: "daily_reminder",
-        user_id: row.user_id,
-        status: "failed",
-        message_text: html,
-        error_text: error?.message || String(error),
-        sent_at: nowIso,
-        meta: { send_time: sendTime, source: meta.source || "manual" },
-      });
+    result.checked += candidates.length;
+
+    for (const row of candidates) {
+      const html = buildDailyReminderText(dailySetting, row.full_name, now);
+
+      try {
+        await tgSendMessage(env, row.user_id, html);
+        await markDailyReminderSent(env, row.user_id, nowIso);
+
+        await sbInsertNotificationLog(env, {
+          setting_key: "daily_reminder",
+          user_id: row.user_id,
+          status: "sent",
+          message_text: html,
+          sent_at: nowIso,
+          meta: {
+            send_time: sendTime,
+            source: meta.source || "scheduled",
+            batch_size: batchSize,
+          },
+        });
+
+        result.sent += 1;
+      } catch (error) {
+        result.failed.push({
+          user_id: row.user_id,
+          error: error?.message || String(error),
+        });
+
+        await sbInsertNotificationLog(env, {
+          setting_key: "daily_reminder",
+          user_id: row.user_id,
+          status: "failed",
+          message_text: html,
+          error_text: error?.message || String(error),
+          sent_at: nowIso,
+          meta: {
+            send_time: sendTime,
+            source: meta.source || "scheduled",
+            batch_size: batchSize,
+          },
+        });
+      }
     }
+
+    if (rawRows.length < pageLimit) break;
   }
 
   if (result.sent > 0) {
     await sbTouchNotificationSetting(env, "daily_reminder", { last_sent_at: nowIso });
+  }
+
+  if (totalScanned >= perRunLimit) {
+    result.note = `per_run_limit reached (${perRunLimit})`;
   }
 
   return result;
