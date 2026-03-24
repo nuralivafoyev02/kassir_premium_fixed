@@ -64,3 +64,12 @@ Endi quyidagilarni xavfsizroq joriy qilish mumkin:
 - Plan: `/plan` now supports per-category spending limits and warning thresholds.
 - Settings > Categories: now active with keyword editing, icon editing, delete and usage preview.
 - Cron reminders: add `CRON_SECRET` in Vercel env and apply the latest `supabase.sql` migrations.
+
+
+
+
+## Last update need to push to prod
+
+worker/index.js
+api/send-report-files.js
+api/send-report-pdf.js

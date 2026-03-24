@@ -851,42 +851,49 @@ const HANDLER_LOADERS = {
   "send-report-pdf": () => import("../api/send-report-pdf.js"),
 };
 
-function applyProcessEnv(env = {}) {
-  try {
-    if (typeof process === "undefined") return;
-    if (!process.env || typeof process.env !== "object") process.env = {};
+function seedLegacyProcessEnv(env) {
+  if (!env || typeof process === "undefined" || !process?.env) return;
+  const keys = [
+    "BOT_TOKEN",
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_KEY",
+    "OPENAI_API_KEY",
+    "ADMIN_IDS",
+    "OWNER_ID",
+    "CRON_SECRET",
+    "CRON_SCHEDULE",
+    "CRON_INTERVAL_MINUTES",
+    "WEBAPP_URL",
+  ];
 
-    const keys = [
-      "BOT_TOKEN",
-      "SUPABASE_URL",
-      "SUPABASE_ANON_KEY",
-      "SUPABASE_SERVICE_ROLE_KEY",
-      "SUPABASE_KEY",
-      "OPENAI_API_KEY",
-      "OWNER_ID",
-      "OWNER_IDS",
-      "ADMIN_IDS",
-      "WEBAPP_URL",
-      "CRON_SECRET",
-    ];
-
-    for (const key of keys) {
-      if (env[key] != null && env[key] !== "") {
-        process.env[key] = String(env[key]);
-      }
+  for (const key of keys) {
+    const value = env?.[key];
+    if (typeof value === "string" && value.length && !process.env[key]) {
+      process.env[key] = value;
     }
-  } catch (error) {
-    console.warn("[worker.env-bridge]", error?.message || String(error));
   }
+}
+
+function resolveLegacyHandler(mod) {
+  const candidates = [
+    mod,
+    mod?.default,
+    mod?.handler,
+    mod?.default?.default,
+    mod?.default?.handler,
+  ];
+  return candidates.find((item) => typeof item === "function") || null;
 }
 
 async function getLegacyHandler(name, env) {
   const loader = HANDLER_LOADERS[name];
   if (!loader) throw new Error(`Unknown legacy handler: ${name}`);
 
-  applyProcessEnv(env);
+  seedLegacyProcessEnv(env);
   const mod = await loader();
-  const handler = mod?.default || mod?.handler || mod;
+  const handler = resolveLegacyHandler(mod);
 
   if (typeof handler !== "function") {
     throw new Error(`Legacy handler is not a function: ${name}`);
@@ -1287,18 +1294,18 @@ export default {
         return invokeLegacyHandler("bot", request, env);
       }
 
-      // Report delivery endpoints
+      // Mini app notification
+      if (url.pathname === "/api/notify-miniapp-tx") {
+        return handleNotifyMiniAppTx(request, env);
+      }
+
+      // Report delivery to Telegram bot
       if (url.pathname === "/api/send-report-files") {
         return invokeLegacyHandler("send-report-files", request, env);
       }
 
       if (url.pathname === "/api/send-report-pdf") {
         return invokeLegacyHandler("send-report-pdf", request, env);
-      }
-
-      // Mini app notification
-      if (url.pathname === "/api/notify-miniapp-tx") {
-        return handleNotifyMiniAppTx(request, env);
       }
 
       // Notification APIs
