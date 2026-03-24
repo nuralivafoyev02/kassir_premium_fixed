@@ -114,6 +114,33 @@ let txSourceRefColumnSupported = null;
 let debtSettlementColumnSupported = null;
 let categoryLimitNameColumnSupported = null;
 
+async function downloadTelegramFileBuffer(fileId) {
+  const fileLink = await bot.getFileLink(fileId);
+  const resp = await fetch(fileLink);
+  if (!resp.ok) throw new Error(`Telegram file download failed: ${resp.status}`);
+  return Buffer.from(await resp.arrayBuffer());
+}
+
+async function transcribeVoiceBuffer(buffer) {
+  if (!openai) throw new Error('OPENAI unavailable');
+  const form = new FormData();
+  form.append('file', new Blob([buffer], { type: 'audio/ogg' }), 'voice.ogg');
+  form.append('model', 'whisper-1');
+  form.append('language', 'uz');
+
+  const resp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${OAI_KEY}` },
+    body: form,
+  });
+
+  const raw = await resp.text();
+  let data;
+  try { data = JSON.parse(raw); } catch { data = { raw }; }
+  if (!resp.ok) throw new Error(data?.error?.message || data?.raw || `Whisper HTTP ${resp.status}`);
+  return String(data?.text || '').trim();
+}
+
 function fmtDateTime(v) {
   if (!v) return '—';
   try {
@@ -1955,31 +1982,14 @@ module.exports = async (req, res) => {
     // ── Ovozli xabar ──
     if (msg.voice) {
       const proc = await bot.sendMessage(chatId, '🎙 Ovozli xabar qabul qilindi...').catch(() => null);
-      const tmpPath = path.join('/tmp', `voice_${userId}_${Date.now()}.ogg`);
 
       try {
         if (!openai) throw new Error('OpenAI configured emas');
 
         if (proc) await bot.editMessageText('⏳ Ovoz tahlil qilinmoqda (Whisper)...', { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
 
-        const fileLink = await bot.getFileLink(msg.voice.file_id);
-        const resp = await axios({ url: fileLink, method: 'GET', responseType: 'stream', timeout: 30000 });
-        const writer = fs.createWriteStream(tmpPath);
-        resp.data.pipe(writer);
-
-        await new Promise((resolve, reject) => {
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-        });
-
-        // Whisper transcription
-        const tr = await openai.audio.transcriptions.create({
-          file: fs.createReadStream(tmpPath),
-          model: 'whisper-1',
-          language: 'uz',
-        });
-
-        const spoken = (tr.text || '').trim();
+        const voiceBuffer = await downloadTelegramFileBuffer(msg.voice.file_id);
+        const spoken = await transcribeVoiceBuffer(voiceBuffer);
         if (!spoken) {
           if (proc) await bot.editMessageText('❌ Ovoz matnga aylanmadi. Qaytadan aniqroq gapirib ko\'ring.', { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
           return res.status(200).json({ ok: true });
@@ -2006,7 +2016,6 @@ module.exports = async (req, res) => {
         logErr('voice', e, { userId });
         if (proc) await bot.editMessageText('😕 Ovozli xabarni qayta ishlashda xatolik yuz berdi. Matn orqali yozib yuboring.', { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
       } finally {
-        if (fs.existsSync(tmpPath)) fs.unlink(tmpPath, () => { });
       }
       return res.status(200).json({ ok: true });
     }
@@ -2026,13 +2035,12 @@ module.exports = async (req, res) => {
         const procMsg = await bot.sendMessage(chatId, '📸 Chek rasmini yuklanmoqda...').catch(() => null);
         try {
           const photoId = msg.photo[msg.photo.length - 1].file_id;
-          const fileLink = await bot.getFileLink(photoId);
-          const resp = await axios({ url: fileLink, method: 'GET', responseType: 'arraybuffer', timeout: 30000 });
+          const photoBuffer = await downloadTelegramFileBuffer(photoId);
           const fileName = `${userId}/${Date.now()}.jpg`;
 
           const { error: upErr } = await db.storage
             .from('receipts')
-            .upload(fileName, Buffer.from(resp.data), { contentType: 'image/jpeg' });
+            .upload(fileName, photoBuffer, { contentType: 'image/jpeg' });
 
           if (upErr) throw upErr;
 

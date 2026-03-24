@@ -9,7 +9,10 @@
     "vite": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "cf:deploy": "wrangler deploy",
+    "cf:tail": "wrangler tail --format pretty",
+    "cf:check": "node --check worker/index.js && node --check api/bot.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.84.0",

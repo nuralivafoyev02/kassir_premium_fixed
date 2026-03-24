@@ -2209,6 +2209,7 @@ ${dataset.sStr.replaceAll('-', '.')} — ${dataset.eStr.replaceAll('-', '.')}`,
   let payload = {};
   try { payload = await resp.json(); } catch { }
   if (!resp.ok || payload?.ok === false) {
+    console.warn('[sendReportFilesToBot]', payload || { status: resp.status });
     throw new Error(payload?.error || `HTTP ${resp.status}`);
   }
 }
@@ -2216,11 +2217,12 @@ ${dataset.sStr.replaceAll('-', '.')} — ${dataset.eStr.replaceAll('-', '.')}`,
 async function notifyMiniAppTxSaved(row) {
   if (!UID || !row) return;
   try {
-    await fetch('/api/notify-miniapp-tx', {
+    const resp = await fetch('/api/notify-miniapp-tx', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user_id: UID,
+        tg_user_id: Number(tg?.initDataUnsafe?.user?.id || UID || 0),
         amount: Number(row.amount || 0),
         type: row.type,
         category: row.category,
@@ -2228,6 +2230,11 @@ async function notifyMiniAppTxSaved(row) {
         source: row.source || 'mini_app'
       })
     });
+    let payload = {};
+    try { payload = await resp.json(); } catch { }
+    if (!resp.ok || payload?.ok === false) {
+      console.warn('[notifyMiniAppTxSaved]', payload || { status: resp.status });
+    }
   } catch (error) {
     console.warn('[notifyMiniAppTxSaved]', error);
   }
