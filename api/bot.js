@@ -2224,12 +2224,12 @@ module.exports = async (req, res) => {
 
       try {
         await sendAdminPanel(chatId);
-        void getAppLogger().info({
+        await getAppLogger().info({
           scope: 'admin-open',
           ...buildUserLogContext(msg, user),
           message: 'Admin panel ochildi',
           payload: { source: '/admin' },
-        });
+        }).catch(() => { });
       } catch (e) {
         await bot.sendMessage(chatId, `⚠️ Admin panelni ochishda xatolik: ${esc(tgErr(e))}`, { parse_mode: 'HTML' }).catch(() => { });
       }
@@ -2250,23 +2250,23 @@ module.exports = async (req, res) => {
       try {
         if (!sub || sub === 'list') {
           await sendNotificationPanel(chatId);
-          void getAppLogger().info({
+          await getAppLogger().info({
             scope: 'notif-panel',
             ...buildUserLogContext(msg, user),
             message: 'Notification panel ochildi',
             payload: { source: '/notif' },
-          });
+          }).catch(() => { });
           return res.status(200).json({ ok: true });
         }
 
         if (sub === 'help') {
           await bot.sendMessage(chatId, buildNotificationHelpText(), { parse_mode: 'HTML' }).catch(() => { });
-          void getAppLogger().info({
+          await getAppLogger().info({
             scope: 'notif-help',
             ...buildUserLogContext(msg, user),
             message: "Notification qo'llanmasi ochildi",
             payload: { source: '/notif help' },
-          });
+          }).catch(() => { });
           return res.status(200).json({ ok: true });
         }
 
@@ -2278,12 +2278,12 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { enabled: sub === 'on' });
           await bot.sendMessage(chatId, `✅ ${saved.title} holati: <b>${saved.enabled ? 'yoqildi' : "o'chirildi"}</b>`, { parse_mode: 'HTML' }).catch(() => { });
-          void getAppLogger().info({
+          await getAppLogger().info({
             scope: 'notif-toggle',
             ...buildUserLogContext(msg, user),
             message: 'Notification holati yangilandi',
             payload: { key, enabled: saved.enabled },
-          });
+          }).catch(() => { });
           return res.status(200).json({ ok: true });
         }
 
@@ -2301,12 +2301,12 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { send_time: normalized });
           await bot.sendMessage(chatId, `✅ ${saved.title} vaqti <b>${saved.send_time}</b> qilib saqlandi.`, { parse_mode: 'HTML' }).catch(() => { });
-          void getAppLogger().info({
+          await getAppLogger().info({
             scope: 'notif-time',
             ...buildUserLogContext(msg, user),
             message: 'Notification vaqti yangilandi',
             payload: { key, send_time: saved.send_time, timezone: saved.timezone },
-          });
+          }).catch(() => { });
           return res.status(200).json({ ok: true });
         }
 
@@ -2325,12 +2325,12 @@ module.exports = async (req, res) => {
             config: base.config || {}
           });
           await bot.sendMessage(chatId, `♻️ ${saved.title} default holatiga qaytarildi.`, { parse_mode: 'HTML' }).catch(() => { });
-          void getAppLogger().info({
+          await getAppLogger().info({
             scope: 'notif-reset',
             ...buildUserLogContext(msg, user),
             message: 'Notification default holatiga qaytarildi',
             payload: { key, enabled: saved.enabled, send_time: saved.send_time },
-          });
+          }).catch(() => { });
           return res.status(200).json({ ok: true });
         }
 
@@ -2341,12 +2341,12 @@ module.exports = async (req, res) => {
             return res.status(200).json({ ok: true });
           }
           await sendNotificationPreview(chatId, key);
-          void getAppLogger().info({
+          await getAppLogger().info({
             scope: 'notif-test',
             ...buildUserLogContext(msg, user),
             message: 'Notification preview yuborildi',
             payload: { key },
-          });
+          }).catch(() => { });
           return res.status(200).json({ ok: true });
         }
 
@@ -2364,12 +2364,12 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { message_template: template });
           await bot.sendMessage(chatId, `✅ ${saved.title} matni yangilandi.\n\n<i>Test uchun /notif test ${key}</i>`, { parse_mode: 'HTML' }).catch(() => { });
-          void getAppLogger().info({
+          await getAppLogger().info({
             scope: 'notif-text',
             ...buildUserLogContext(msg, user),
             message: 'Notification matni yangilandi',
             payload: { key, template_preview: clipText(template, 160) },
-          });
+          }).catch(() => { });
           return res.status(200).json({ ok: true });
         }
 
@@ -2462,7 +2462,7 @@ module.exports = async (req, res) => {
     // ── Yangi foydalanuvchi — telefon so'rash ──
     if (!user) {
       if (text === '/start') {
-        void getAppLogger().success({
+        await getAppLogger().success({
           scope: 'start-new-user',
           ...buildUserLogContext(msg, null),
           message: "Yangi foydalanuvchiga /start bo'yicha telefon so'rovi yuborildi",
@@ -2471,7 +2471,7 @@ module.exports = async (req, res) => {
             registered: false,
             contact_requested: true,
           },
-        });
+        }).catch(() => { });
       }
       await bot.sendMessage(chatId, `👋 Assalomu alaykum!\nBotdan foydalanish uchun telefon raqamingizni tasdiqlang.`, {
         reply_markup: {
@@ -2499,7 +2499,7 @@ module.exports = async (req, res) => {
       if (isNew) {
         await db.from('users').update({ last_start_date: iso() }).eq('user_id', userId);
       }
-      void getAppLogger().success({
+      await getAppLogger().success({
         scope: 'start',
         ...buildUserLogContext(msg, user),
         message: "Foydalanuvchi /start bosdi",
@@ -2508,7 +2508,7 @@ module.exports = async (req, res) => {
           first_start_today: isNew,
           registered: true,
         },
-      });
+      }).catch(() => { });
       return res.status(200).json({ ok: true });
     }
 
