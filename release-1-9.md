@@ -100,8 +100,8 @@ Keyingi yangilanishda `LOG_LEVEL` ko'p qiymatli formatni ham qabul qiladigan bo'
 - `LOCAL_LOG_LEVEL=ERROR`
 - `ADMIN_NOTIFY_CHAT_ID=<admin chat id>`
 - `CLIENT_CONSOLE_LOGS_ENABLED=false`
+npx wrangler secret put TELEGRAM_LOGGING_ENABLED
 npx wrangler secret put CLIENT_CONSOLE_LOGS_ENABLED
-npx wrangler secret put LOG_LEVEL
 
 ## Log format
 
