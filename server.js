@@ -90,6 +90,15 @@ async function start() {
         }
       }
 
+      if (pathname === '/firebase-messaging-sw.js') {
+        const handler = loadApiHandler('firebase-messaging-sw');
+        if (handler) {
+          const mRes = mockRes(res);
+          req.body = {};
+          return handler(req, mRes);
+        }
+      }
+
       if (pathname === '/api/bot') {
         const handler = loadApiHandler('bot');
         if (handler) {
@@ -101,6 +110,24 @@ async function start() {
 
       if (pathname === '/api/client-log') {
         const handler = loadApiHandler('client-log');
+        if (handler) {
+          req.body = req.method === 'POST' ? await parseBody(req) : {};
+          const mRes = mockRes(res);
+          return handler(req, mRes);
+        }
+      }
+
+      if (pathname === '/api/push/register') {
+        const handler = loadApiHandler('push-register');
+        if (handler) {
+          req.body = req.method === 'POST' ? await parseBody(req) : {};
+          const mRes = mockRes(res);
+          return handler(req, mRes);
+        }
+      }
+
+      if (pathname === '/api/push/unregister') {
+        const handler = loadApiHandler('push-unregister');
         if (handler) {
           req.body = req.method === 'POST' ? await parseBody(req) : {};
           const mRes = mockRes(res);

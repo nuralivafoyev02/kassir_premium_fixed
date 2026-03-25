@@ -1,6 +1,5 @@
 'use strict';
 
-const TelegramBot = require('node-telegram-bot-api');
 const { createClient } = require('@supabase/supabase-js');
 const { createTelegramOps } = require('../lib/telegram-ops.cjs');
 
@@ -64,7 +63,6 @@ if (!BOT_TOKEN) throw new Error("BOT_TOKEN yo'q");
 if (!SUPA_URL) throw new Error("SUPABASE_URL yo'q");
 if (!SUPA_KEY) throw new Error("SUPABASE_KEY yo'q");
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 const db = createClient(SUPA_URL, SUPA_KEY);
 const cronLogger = createTelegramOps({
   botToken: BOT_TOKEN,
@@ -75,6 +73,28 @@ const cronLogger = createTelegramOps({
   localLevel: process.env.LOCAL_LOG_LEVEL || 'ERROR',
   source: 'CRON',
 });
+
+let sendNotificationModulePromise = null;
+
+async function getSendNotification() {
+  if (!sendNotificationModulePromise) {
+    sendNotificationModulePromise = import('../services/notifications/send-notification.mjs');
+  }
+  const mod = await sendNotificationModulePromise;
+  return mod.sendNotification;
+}
+
+function buildDeliveryMeta(delivery, extra = {}) {
+  return {
+    ...extra,
+    provider: delivery?.provider || null,
+    fallback_provider: delivery?.fallbackProvider || null,
+    fallback_used: delivery?.fallbackUsed === true,
+    delivered_count: Number(delivery?.deliveredCount || 0),
+    target_count: Number(delivery?.targetCount || 0),
+    invalid_token_count: Number(delivery?.invalidTokenCount || 0),
+  };
+}
 
 function summarizeCronResult(result = {}) {
   return {
@@ -548,7 +568,20 @@ async function processDailyReminders(now, meta = {}) {
       const html = buildDailyReminderText(dailySetting, row.full_name, now);
 
       try {
-        await bot.sendMessage(row.user_id, html, { parse_mode: 'HTML' });
+        const sendNotification = await getSendNotification();
+        const delivery = await sendNotification(process.env, {
+          userId: row.user_id,
+          html,
+          title: dailySetting.title || 'Kunlik eslatma',
+          type: 'daily_reminder',
+          clickUrl: '/',
+          tag: `daily-reminder-${row.user_id}`,
+          data: {
+            url: '/',
+            setting_key: 'daily_reminder',
+          },
+        });
+        if (!delivery.ok) throw new Error(delivery.error || delivery.reason || 'send failed');
         await markDailyReminderSent(row.user_id, nowIso);
 
         await insertNotificationLog({
@@ -557,10 +590,10 @@ async function processDailyReminders(now, meta = {}) {
           status: 'sent',
           message_text: html,
           sent_at: nowIso,
-          meta: {
+          meta: buildDeliveryMeta(delivery, {
             send_time: sendTime,
             batch_size: batchSize,
-          }
+          })
         });
 
         result.sent += 1;
@@ -574,10 +607,10 @@ async function processDailyReminders(now, meta = {}) {
           message_text: html,
           error_text: err?.message || 'send failed',
           sent_at: nowIso,
-          meta: {
+          meta: buildDeliveryMeta(null, {
             send_time: sendTime,
             batch_size: batchSize,
-          }
+          })
         });
       }
     }
@@ -672,7 +705,20 @@ async function processDailyReports(now, meta = {}) {
       const html = buildDailyReportText(reportSetting, row.full_name, now);
 
       try {
-        await bot.sendMessage(row.user_id, html, { parse_mode: 'HTML' });
+        const sendNotification = await getSendNotification();
+        const delivery = await sendNotification(process.env, {
+          userId: row.user_id,
+          html,
+          title: reportSetting.title || 'Kunlik hisobot',
+          type: 'daily_report',
+          clickUrl: '/',
+          tag: `daily-report-${row.user_id}`,
+          data: {
+            url: '/',
+            setting_key: 'daily_report',
+          },
+        });
+        if (!delivery.ok) throw new Error(delivery.error || delivery.reason || 'send failed');
         await markDailyReportSent(row.user_id, nowIso);
 
         await insertNotificationLog({
@@ -681,10 +727,10 @@ async function processDailyReports(now, meta = {}) {
           status: 'sent',
           message_text: html,
           sent_at: nowIso,
-          meta: {
+          meta: buildDeliveryMeta(delivery, {
             send_time: sendTime,
             batch_size: batchSize,
-          }
+          })
         });
 
         result.sent += 1;
@@ -698,10 +744,10 @@ async function processDailyReports(now, meta = {}) {
           message_text: html,
           error_text: err?.message || 'send failed',
           sent_at: nowIso,
-          meta: {
+          meta: buildDeliveryMeta(null, {
             send_time: sendTime,
             batch_size: batchSize,
-          }
+          })
         });
       }
     }
@@ -773,14 +819,32 @@ async function processDebtReminders(now) {
           continue;
         }
 
-        await bot.sendMessage(debt.user_id, text, { parse_mode: 'HTML' });
+        const sendNotification = await getSendNotification();
+        const delivery = await sendNotification(process.env, {
+          userId: debt.user_id,
+          html: text,
+          title: debtSetting.title || 'Qarz eslatmasi',
+          type: 'debt_reminder',
+          clickUrl: '/debts',
+          tag: `debt-reminder-${debt.id}`,
+          data: {
+            url: '/debts',
+            debt_id: String(debt.id),
+            setting_key: 'debt_reminder',
+          },
+        });
+        if (!delivery.ok) throw new Error(delivery.error || delivery.reason || 'send failed');
         await insertNotificationLog({
           setting_key: 'debt_reminder',
           user_id: debt.user_id,
           status: 'sent',
           message_text: text,
           sent_at: nowIso,
-          meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null }
+          meta: buildDeliveryMeta(delivery, {
+            debt_id: debt.id,
+            due_at: debt.due_at || null,
+            remind_at: debt.remind_at || null,
+          })
         });
         result.sent += 1;
       } catch (err) {
@@ -795,7 +859,11 @@ async function processDebtReminders(now) {
           message_text: text,
           error_text: err?.message || 'send failed',
           sent_at: nowIso,
-          meta: { debt_id: debt.id, due_at: debt.due_at || null, remind_at: debt.remind_at || null }
+          meta: buildDeliveryMeta(null, {
+            debt_id: debt.id,
+            due_at: debt.due_at || null,
+            remind_at: debt.remind_at || null,
+          })
         });
       }
     }

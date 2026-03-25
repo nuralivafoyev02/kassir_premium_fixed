@@ -309,10 +309,13 @@
           <div class="stg-txt" data-i18n="stg_friends">Do'stlar</div>
           <span class="stg-badge" data-i18n="stg_coming_soon">Tez kunda</span>
         </div>
-        <div class="stg-item stg-disabled">
+        <div class="stg-item" onclick="openStgSub('stg-sub-notifications')">
           <div class="stg-ico">🔔</div>
-          <div class="stg-txt" data-i18n="stg_notifications">Bildirishnomalar</div>
-          <span class="stg-badge" data-i18n="stg_coming_soon">Tez kunda</span>
+          <div class="stg-info">
+            <div class="stg-txt" data-i18n="stg_notifications">Bildirishnomalar</div>
+            <div class="stg-sub" data-i18n="stg_notifications_sub">Ogohlantirishlar sozlash</div>
+          </div>
+          <div class="stg-arrow">›</div>
         </div>
       </div>
 
@@ -575,6 +578,47 @@
         <div id="rec-loader" class="rec-loader" data-i18n="receipt_loading">Chek yuklanmoqda...</div>
         <div id="rec-error" class="rec-error"></div>
         <img id="rec-img" src="" alt="chek" data-i18n-alt="hist_receipt">
+      </div>
+    </div>
+  </div>
+
+  <div class="ov" id="stg-sub-notifications" onclick="closeOv('stg-sub-notifications',event)">
+    <div class="sheet stg-sheet" onclick="event.stopPropagation()">
+      <div class="sh-hdl"></div>
+      <button class="sh-close" onclick="closeOv('stg-sub-notifications')">✕</button>
+      <div class="sh-ttl" data-i18n="notif_sheet_title">Push bildirishnomalar</div>
+      <div class="notif-panel">
+        <div class="notif-card">
+          <div class="notif-head">
+            <span class="notif-badge" id="notif-state-badge">—</span>
+          </div>
+          <div class="notif-row">
+            <span data-i18n="notif_support_label">Qo'llab-quvvatlash</span>
+            <strong id="notif-support-value">—</strong>
+          </div>
+          <div class="notif-row">
+            <span data-i18n="notif_permission_label">Ruxsat</span>
+            <strong id="notif-permission-value">—</strong>
+          </div>
+          <div class="notif-row">
+            <span data-i18n="notif_provider_label">Provider</span>
+            <strong id="notif-provider-value">—</strong>
+          </div>
+          <div class="notif-row">
+            <span data-i18n="notif_device_label">Qurilma</span>
+            <strong id="notif-device-value">—</strong>
+          </div>
+          <div class="notif-row">
+            <span data-i18n="notif_sync_label">Oxirgi sync</span>
+            <strong id="notif-sync-value">—</strong>
+          </div>
+        </div>
+        <div class="notif-note" id="notif-help-text"></div>
+        <div class="notif-actions">
+          <button class="bpri" id="notif-enable-btn" onclick="enablePushNotifications()" data-i18n="notif_enable_btn">Yoqish</button>
+          <button class="bcl" id="notif-refresh-btn" onclick="refreshPushNotifications()" data-i18n="notif_refresh_btn">Yangilash</button>
+        </div>
+        <button class="bcl notif-disable-btn" id="notif-disable-btn" onclick="disablePushNotifications()" data-i18n="notif_disable_btn">O'chirish</button>
       </div>
     </div>
   </div>

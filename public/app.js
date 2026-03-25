@@ -214,9 +214,290 @@ const profileEditState = {
 
 let currentLang = store.get('lang') || 'uz';
 let T = {};
+let pushNotificationState = {
+  supported: false,
+  supportReason: 'pending',
+  status: 'idle',
+  permission: typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
+  provider: 'legacy_worker',
+  publicEnabled: false,
+  tokenRegistered: false,
+  tokenPreview: '',
+  lastSyncAt: null,
+  lastError: null,
+  embeddedTelegram: !!tg,
+  appKind: tg ? 'mini_app' : 'web_app',
+};
 
 function tt(key, fallback = '') {
   return (T && T[key]) || fallback || key;
+}
+
+function notifText(uz, ru, en) {
+  return currentLang === 'ru' ? ru : currentLang === 'en' ? en : uz;
+}
+
+function notificationStatusLabel(state = pushNotificationState) {
+  switch (state?.status) {
+    case 'ready':
+      return notifText('Tayyor', 'Готово', 'Ready');
+    case 'syncing':
+      return notifText('Sinxronlanmoqda', 'Синхронизация', 'Syncing');
+    case 'waiting_user':
+      return notifText('User kutilmoqda', 'Ожидается user', 'Waiting for user');
+    case 'permission_required':
+      return notifText('Ruxsat kerak', 'Нужно разрешение', 'Permission required');
+    case 'permission_denied':
+      return notifText('Ruxsat bloklangan', 'Разрешение заблокировано', 'Permission blocked');
+    case 'token_missing':
+      return notifText('Token topilmadi', 'Токен не получен', 'Token missing');
+    case 'disabled':
+      return notifText('O‘chiq', 'Выключено', 'Disabled');
+    case 'unsupported':
+      return notifText('Qo‘llanmaydi', 'Не поддерживается', 'Unsupported');
+    case 'error':
+      return notifText('Xatolik', 'Ошибка', 'Error');
+    default:
+      return state?.supported
+        ? notifText('Tayyor emas', 'Не готово', 'Not ready')
+        : notifText('Legacy fallback', 'Legacy fallback', 'Legacy fallback');
+  }
+}
+
+function notificationBadgeState(state = pushNotificationState) {
+  if (state?.status === 'ready' && state?.tokenRegistered) return 'ready';
+  if (state?.status === 'error' || state?.status === 'permission_denied' || state?.status === 'unsupported') return 'error';
+  return 'warn';
+}
+
+function notificationSupportLabel(state = pushNotificationState) {
+  if (state?.supported) return notifText('Mavjud', 'Доступно', 'Available');
+  if (!state?.publicEnabled && state?.provider !== 'fcm') {
+    return notifText('Legacy only', 'Только legacy', 'Legacy only');
+  }
+  if (state?.supportReason === 'telegram_embedded_limit') {
+    return notifText('Telegram ichida cheklangan', 'Ограничено в Telegram', 'Limited in Telegram');
+  }
+  if (state?.supportReason === 'missing_public_config') {
+    return notifText('Firebase config yo‘q', 'Нет Firebase config', 'Firebase config missing');
+  }
+  if (state?.supportReason === 'insecure_context') {
+    return notifText('HTTPS kerak', 'Нужен HTTPS', 'HTTPS required');
+  }
+  return notifText('Mavjud emas', 'Недоступно', 'Unavailable');
+}
+
+function notificationPermissionLabel(permission = pushNotificationState.permission) {
+  if (permission === 'granted') return notifText('Berilgan', 'Разрешено', 'Granted');
+  if (permission === 'denied') return notifText('Rad etilgan', 'Запрещено', 'Denied');
+  if (permission === 'unsupported') return notifText('Yo‘q', 'Нет', 'Unsupported');
+  return notifText('So‘ralmagan', 'Не запрошено', 'Not requested');
+}
+
+function notificationProviderLabel(state = pushNotificationState) {
+  return state?.provider === 'fcm' ? 'FCM -> Legacy Worker' : 'Legacy Worker';
+}
+
+function notificationDeviceLabel(state = pushNotificationState) {
+  const shell = state?.appKind === 'mini_app'
+    ? notifText('Mini App', 'Mini App', 'Mini App')
+    : notifText('Web App', 'Web App', 'Web App');
+  const tokenState = state?.tokenRegistered
+    ? `FCM token · ${state.tokenPreview || 'ready'}`
+    : notifText('Token sync qilinmagan', 'Токен не синхронизирован', 'Token not synced');
+  return `${shell} · ${tokenState}`;
+}
+
+function formatNotificationSyncTime(value) {
+  if (!value) return notifText('Hali yo‘q', 'Пока нет', 'Not yet');
+  try {
+    return new Intl.DateTimeFormat(localeTag(), {
+      dateStyle: 'short',
+      timeStyle: 'short'
+    }).format(new Date(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function notificationHelpText(state = pushNotificationState) {
+  if (!state?.publicEnabled && state?.provider !== 'fcm') {
+    return notifText(
+      'Hozir legacy Worker notification asosiy. FCM yoqilgach system primary provider sifatida push ishlatadi.',
+      'Сейчас основным остаётся legacy Worker. После включения FCM push станет primary provider.',
+      'Legacy Worker is currently primary. Once FCM is enabled, push becomes the primary provider.'
+    );
+  }
+
+  if (state?.supportReason === 'telegram_embedded_limit') {
+    return notifText(
+      'Telegram ichki brauzerida web push ko‘pincha ishlamaydi. Shu sabab ichkarida eski Worker/Telegram fallback saqlanadi, FCM esa tashqi brauzer yoki PWA’da ishlaydi.',
+      'Во встроенном браузере Telegram web push чаще всего не работает. Поэтому внутри Telegram остаётся старый Worker/Telegram fallback, а FCM работает во внешнем браузере или PWA.',
+      'Web push usually does not work inside the Telegram in-app browser. Because of that, the legacy Worker/Telegram fallback stays active there, while FCM works in an external browser or PWA.'
+    );
+  }
+
+  if (!state?.supported) {
+    return notifText(
+      'Qurilma yoki brauzer service worker / push API’ni to‘liq qo‘llamayapti. Bu holatda system legacy Worker notification bilan ishlashda davom etadi.',
+      'Устройство или браузер не поддерживает service worker / push API полностью. В этом случае система продолжит работать через legacy Worker notifications.',
+      'This device or browser does not fully support service workers / the Push API. In that case the system continues with legacy Worker notifications.'
+    );
+  }
+
+  if (state?.permission === 'default') {
+    return notifText(
+      'Ruxsat avtomatik so‘ralmaydi. Faqat “Yoqish” tugmasi bosilganda permission oynasi ochiladi.',
+      'Разрешение не запрашивается автоматически. Окно permission откроется только после нажатия кнопки “Включить”.',
+      'Permission is never requested automatically. The browser prompt opens only when you tap “Enable”.'
+    );
+  }
+
+  if (state?.permission === 'denied') {
+    return notifText(
+      'Brauzer push ruxsatini bloklagan. Uni browser settings ichidan yoqib, keyin qayta “Yangilash” qiling.',
+      'Браузер заблокировал push-разрешение. Включите его в настройках браузера, затем нажмите “Обновить”.',
+      'The browser blocked push permission. Re-enable it in browser settings, then tap “Refresh”.'
+    );
+  }
+
+  if (state?.lastError) {
+    return state.lastError;
+  }
+
+  return notifText(
+    'Primary provider: FCM. Agar FCM config, token yoki runtime xato bersa, system avtomatik legacy Worker notificationga qaytadi.',
+    'Primary provider: FCM. Если FCM упадёт из-за конфига, токена или runtime ошибки, система автоматически переключится на legacy Worker notifications.',
+    'Primary provider: FCM. If FCM fails because of config, token, or a runtime error, the system automatically falls back to legacy Worker notifications.'
+  );
+}
+
+function updateNotificationSettingsUI() {
+  const state = pushNotificationState || {};
+  const badge = $('notif-state-badge');
+  if (badge) {
+    badge.textContent = notificationStatusLabel(state);
+    badge.dataset.state = notificationBadgeState(state);
+  }
+  const setText = (id, value) => {
+    const el = $(id);
+    if (el) el.textContent = value;
+  };
+
+  setText('notif-support-value', notificationSupportLabel(state));
+  setText('notif-permission-value', notificationPermissionLabel(state.permission));
+  setText('notif-provider-value', notificationProviderLabel(state));
+  setText('notif-device-value', notificationDeviceLabel(state));
+  setText('notif-sync-value', formatNotificationSyncTime(state.lastSyncAt));
+  setText('notif-help-text', notificationHelpText(state));
+
+  const enableBtn = $('notif-enable-btn');
+  if (enableBtn) {
+    enableBtn.disabled = !UID || !state.publicEnabled || !state.supported || state.permission === 'denied';
+  }
+  const refreshBtn = $('notif-refresh-btn');
+  if (refreshBtn) {
+    refreshBtn.disabled = !UID || !state.publicEnabled || !state.supported || state.permission !== 'granted';
+  }
+  const disableBtn = $('notif-disable-btn');
+  if (disableBtn) {
+    disableBtn.disabled = !state.tokenRegistered;
+  }
+}
+
+window.addEventListener('kassa:push-state', (event) => {
+  pushNotificationState = { ...pushNotificationState, ...(event?.detail || {}) };
+  updateNotificationSettingsUI();
+});
+
+window.addEventListener('kassa:push-message', (event) => {
+  const detail = event?.detail || {};
+  const title = detail.title || tt('stg_notifications', 'Bildirishnomalar');
+  const body = detail.body || '';
+  showErr(body ? `${title}: ${body}` : title, 4200);
+});
+
+async function configurePushNotifications() {
+  const manager = window.__KASSA_PUSH__;
+  if (!manager?.configure) return pushNotificationState;
+  try {
+    const state = await manager.configure({
+      userId: UID,
+      appConfig: window.__APP_CONFIG__ || {},
+    });
+    if (state) pushNotificationState = { ...pushNotificationState, ...state };
+  } catch (error) {
+    console.warn('[push-configure]', error);
+    pushNotificationState = {
+      ...pushNotificationState,
+      status: 'error',
+      lastError: error?.message || String(error),
+    };
+  }
+  updateNotificationSettingsUI();
+  return pushNotificationState;
+}
+
+async function syncPushNotifications(options = {}) {
+  const manager = window.__KASSA_PUSH__;
+  if (!manager?.sync) {
+    showErr(notifText('Push manager tayyor emas', 'Push manager не готов', 'Push manager is not ready'));
+    return null;
+  }
+
+  try {
+    const state = await manager.sync(options);
+    if (state) pushNotificationState = { ...pushNotificationState, ...state };
+    updateNotificationSettingsUI();
+
+    if (options.requestPermission && state?.permission === 'granted' && state?.tokenRegistered) {
+      showErr(notifText('Push bildirishnomalar yoqildi ✅', 'Push-уведомления включены ✅', 'Push notifications enabled ✅'));
+    } else if (options.requestPermission && state?.permission === 'denied') {
+      showErr(notifText('Brauzer push ruxsatini rad etdi', 'Браузер отклонил push-разрешение', 'The browser denied push permission'));
+    } else if (options.force && state?.tokenRegistered) {
+      showErr(notifText('Push token yangilandi ✅', 'Push-токен обновлён ✅', 'Push token refreshed ✅'));
+    }
+
+    return state;
+  } catch (error) {
+    console.warn('[push-sync]', error);
+    pushNotificationState = {
+      ...pushNotificationState,
+      status: 'error',
+      lastError: error?.message || String(error),
+    };
+    updateNotificationSettingsUI();
+    showErr(notifText('Push sync xatosi', 'Ошибка push sync', 'Push sync error') + ': ' + (error?.message || error));
+    return null;
+  }
+}
+
+async function enablePushNotifications() {
+  return syncPushNotifications({ requestPermission: true, force: true });
+}
+
+async function refreshPushNotifications() {
+  return syncPushNotifications({ force: true });
+}
+
+async function disablePushNotifications() {
+  const manager = window.__KASSA_PUSH__;
+  if (!manager?.disable) {
+    showErr(notifText('Push manager tayyor emas', 'Push manager не готов', 'Push manager is not ready'));
+    return null;
+  }
+
+  try {
+    const state = await manager.disable('manual_disable');
+    if (state) pushNotificationState = { ...pushNotificationState, ...state };
+    updateNotificationSettingsUI();
+    showErr(notifText('Push bildirishnomalar o‘chirildi', 'Push-уведомления отключены', 'Push notifications disabled'));
+    return state;
+  } catch (error) {
+    console.warn('[push-disable]', error);
+    showErr(notifText('Push o‘chirishda xato', 'Ошибка отключения push', 'Failed to disable push') + ': ' + (error?.message || error));
+    return null;
+  }
 }
 
 // ─── HELPERS ────────────────────────────────────────────
@@ -809,6 +1090,7 @@ function hideLoader() {
   buildIconGrid();
 
   await loadConfig();
+  await configurePushNotifications();
 
   if (db && UID) {
     try {
@@ -829,6 +1111,7 @@ function hideLoader() {
 
   renderAll();
   updateSettingsUI();
+  updateNotificationSettingsUI();
   initSettingsUI();
   hideLoader();
   initSwipe();
@@ -1917,6 +2200,7 @@ function updateSettingsUI() {
   updatePinUI();
   updateThemeIcon();
   updateAccentThemeUI();
+  updateNotificationSettingsUI();
 }
 
 async function saveRate(v) {
@@ -2526,6 +2810,7 @@ function applyLang() {
   document.documentElement.lang = currentLang === 'ru' ? 'ru' : currentLang === 'en' ? 'en' : 'uz';
   document.title = tt('app_name', 'Kassa');
   renderProfileUI();
+  updateNotificationSettingsUI();
 }
 
 async function changeLang(lang) {
@@ -2560,6 +2845,10 @@ function openStgSub(id) {
   }
   if (id === 'stg-sub-cats') {
     stgCatTab('income');
+  }
+  if (id === 'stg-sub-notifications') {
+    updateNotificationSettingsUI();
+    configurePushNotifications().catch(() => { });
   }
   if (id === 'stg-sub-terms') {
     const el = $('stg-terms-text');
