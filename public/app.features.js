@@ -1391,14 +1391,20 @@
     const originalGoTab = goTab;
     goTab = function goTabEnhanced(tab, opts = {}) {
       const out = originalGoTab.call(this, tab, opts);
-      if (tab === 'debt') {
-        renderDebts();
-        refreshFeatureData('debt');
+      const afterTabReady = () => {
+        if (tab === 'debt') {
+          renderDebts();
+          refreshFeatureData('debt');
+        }
+        if (tab === 'plan') {
+          renderPlans();
+          refreshFeatureData('plan');
+        }
+      };
+      if (out && typeof out.then === 'function') {
+        return out.finally(afterTabReady);
       }
-      if (tab === 'plan') {
-        renderPlans();
-        refreshFeatureData('plan');
-      }
+      afterTabReady();
       return out;
     };
 

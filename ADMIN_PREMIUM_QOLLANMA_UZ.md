@@ -69,7 +69,7 @@ Tekshiruvda quyidagilarni tasdiqlang:
 
 - tarif: `Premium`
 - holat: `Obuna bo'lgan`
-- narx: `21 999 so'm / oy`
+- narx: `14 999 so'm / oy`
 - tugash sanasi to'g'ri qo'yilgan
 
 ## Premium olib tashlash yoki free tarifga qaytarish
@@ -121,7 +121,8 @@ Faraz qilaylik user ID `7894854944`.
 ## Muhim eslatmalar
 
 - Bu buyruqlar faqat adminlar uchun ishlaydi.
-- Premium narxi loyihada `21 999 so'm / oy` sifatida belgilangan.
+- Premium narxi loyihada hozircha aksiya bilan `14 999 so'm / oy` sifatida ko'rsatiladi.
+- Oldingi narx `21 999 so'm / oy`, aksiya `2026-yil 26-aprel, 23:59` gacha ishlaydi.
 - Hozirgi `/premium` buyrug'i foydalanuvchiga Premium muddatini **hozirgi vaqtdan boshlab** beradi.
 - Demak, bu buyruq yangi Premium berish uchun juda qulay.
 - Agar kelajakda mavjud Premium muddatini ustiga qo'shib uzaytirish kerak bo'lsa, alohida `renew/extend` logikasi qo'shilgani ma'qul.

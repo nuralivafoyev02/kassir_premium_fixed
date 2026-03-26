@@ -247,6 +247,33 @@ let subscriptionState = {
   snapshot: null,
 };
 
+const FALLBACK_PRICING_SALE_START_AT = '2026-03-26T00:00:00+05:00';
+const FALLBACK_PRICING_SALE_END_AT = '2026-04-26T23:59:59+05:00';
+const FALLBACK_PLAN_FEATURE_KEYS = Object.freeze({
+  free: Object.freeze([
+    'basic_income',
+    'basic_expense',
+    'history',
+    'basic_dashboard',
+    'basic_categories',
+    'basic_sync',
+    'one_plan',
+    'one_debt',
+    'one_limit',
+    'basic_reminder',
+  ]),
+  premium_monthly: Object.freeze([
+    'unlimited_plans',
+    'unlimited_debts',
+    'unlimited_limits',
+    'morning_evening_reminders',
+    'custom_reminders',
+    'pdf_reports',
+    'deep_analytics',
+    'ai_ready',
+  ]),
+});
+
 function tt(key, fallback = '') {
   return (T && T[key]) || fallback || key;
 }
@@ -262,20 +289,206 @@ function hasSubscriptionSchema(record) {
   return SUBSCRIPTION_USER_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(record || {}, field));
 }
 
+function parseDateSafe(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function getLocalizedPlanTitleByCode(code) {
+  return code === 'premium_monthly'
+    ? tt('subscription_plan_premium', 'Premium')
+    : tt('subscription_plan_free', 'Bepul');
+}
+
+function getPricingFeatureFallback(key) {
+  const map = {
+    basic_income: 'Oddiy kirim qo\'shish',
+    basic_expense: 'Oddiy chiqim qo\'shish',
+    history: 'Tarixni ko\'rish',
+    basic_dashboard: 'Basic dashboard',
+    basic_categories: 'Basic kategoriya ishlatish',
+    basic_sync: 'Bot va mini app asosiy sinxron ishlashi',
+    one_plan: '1 ta faol reja',
+    one_debt: '1 ta faol qarz',
+    one_limit: '1 ta faol limit',
+    basic_reminder: 'Basic reminder',
+    unlimited_plans: 'Cheksiz reja yaratish',
+    unlimited_debts: 'Cheksiz qarz yaratish',
+    unlimited_limits: 'Cheksiz limit yaratish',
+    morning_evening_reminders: 'Ertalabgi va kechki eslatmalar',
+    custom_reminders: 'Custom reminder vaqtlarini sozlash',
+    pdf_reports: 'PDF va kengaytirilgan hisobotlar',
+    deep_analytics: 'Chuqur statistika va kengaytirilgan analiz',
+    ai_ready: 'Kelajakdagi premium-only AI qulayliklar',
+  };
+  return map[key] || '';
+}
+
+function getLocalizedPlanFeatures(plan = {}) {
+  const featureKeys = Array.isArray(plan.feature_keys)
+    ? plan.feature_keys
+    : Array.isArray(FALLBACK_PLAN_FEATURE_KEYS[plan.code])
+      ? FALLBACK_PLAN_FEATURE_KEYS[plan.code]
+      : [];
+  if (!featureKeys.length) {
+    return Array.isArray(plan.features) ? plan.features.slice() : [];
+  }
+  return featureKeys.map((featureKey, index) => {
+    const rawFallback = Array.isArray(plan.features) ? plan.features[index] : '';
+    return tt(`pricing_feature_${featureKey}`, rawFallback || getPricingFeatureFallback(featureKey));
+  });
+}
+
+function formatPriceAmountUzs(amount) {
+  return `${fmt(amount)} ${tt('suffix_uzs', "so'm")}`;
+}
+
+function formatPlanPriceLabelByAmount(amount, billingPeriod = 'monthly') {
+  const normalized = formatPriceAmountUzs(amount || 0);
+  return billingPeriod === 'monthly'
+    ? `${normalized} ${tt('pricing_monthly_suffix', '/ oy')}`
+    : normalized;
+}
+
+function resolvePlanPricingMeta(plan = {}, now = new Date()) {
+  const nowMs = now instanceof Date ? now.getTime() : toMs(now);
+  const billingPeriod = plan.billing_period || (plan.code === 'free' ? 'free' : 'monthly');
+  const originalPriceCandidate = Number(plan.original_monthly_price_uzs ?? plan.list_price_uzs ?? plan.monthly_price_uzs ?? 0);
+  const monthlyPriceCandidate = Number(plan.monthly_price_uzs ?? 0);
+  const salePriceCandidate = Number(plan.sale_price_uzs ?? 0);
+  const saleStartsAt = parseDateSafe(plan.sale_starts_at || plan.sale_start_at);
+  const saleEndsAt = parseDateSafe(plan.sale_ends_at || plan.sale_end_at);
+  const explicitSaleActive = plan.sale_active === true;
+  const hasSaleWindow = (!saleStartsAt || saleStartsAt.getTime() <= nowMs) && (!!saleEndsAt && saleEndsAt.getTime() > nowMs);
+  const inferredSaleActive = plan.code === 'premium_monthly'
+    && salePriceCandidate > 0
+    && (originalPriceCandidate > salePriceCandidate || monthlyPriceCandidate === salePriceCandidate)
+    && hasSaleWindow;
+  const saleActive = explicitSaleActive || inferredSaleActive;
+  const salePrice = salePriceCandidate > 0 ? salePriceCandidate : null;
+  const originalPrice = Math.max(
+    saleActive && originalPriceCandidate > 0 ? originalPriceCandidate : 0,
+    (!saleActive && monthlyPriceCandidate > 0 ? monthlyPriceCandidate : 0),
+    salePrice || 0
+  );
+  const currentPrice = saleActive
+    ? (salePrice || monthlyPriceCandidate || originalPrice || 0)
+    : (originalPrice || monthlyPriceCandidate || 0);
+
+  return {
+    billingPeriod,
+    currentPrice,
+    originalPrice: originalPrice || currentPrice || 0,
+    salePrice,
+    saleActive,
+    saleStartsAt: saleStartsAt ? saleStartsAt.toISOString() : null,
+    saleEndsAt: saleEndsAt ? saleEndsAt.toISOString() : null,
+    discountAmount: saleActive ? Math.max(0, (originalPrice || 0) - (currentPrice || 0)) : 0,
+  };
+}
+
+function localizePricingPlan(plan = {}) {
+  const pricing = resolvePlanPricingMeta(plan, new Date());
+  return {
+    ...plan,
+    title: getLocalizedPlanTitleByCode(plan.code),
+    price_label: formatPlanPriceLabelByAmount(pricing.currentPrice, pricing.billingPeriod),
+    monthly_price_uzs: pricing.currentPrice,
+    original_monthly_price_uzs: pricing.originalPrice,
+    sale_price_uzs: pricing.salePrice,
+    sale_active: pricing.saleActive,
+    sale_starts_at: pricing.saleStartsAt,
+    sale_ends_at: pricing.saleEndsAt,
+    discount_amount_uzs: pricing.discountAmount,
+    features: getLocalizedPlanFeatures(plan),
+    pricing,
+  };
+}
+
+function getFallbackPricingPlansRaw() {
+  return [
+    {
+      code: 'free',
+      title: 'Bepul',
+      billing_period: 'free',
+      price_label: '0 so\'m',
+      monthly_price_uzs: 0,
+      original_monthly_price_uzs: 0,
+      feature_keys: FALLBACK_PLAN_FEATURE_KEYS.free.slice(),
+      features: FALLBACK_PLAN_FEATURE_KEYS.free.map(getPricingFeatureFallback),
+    },
+    {
+      code: 'premium_monthly',
+      title: 'Premium',
+      billing_period: 'monthly',
+      price_label: '14 999 so\'m / oy',
+      monthly_price_uzs: 21999,
+      original_monthly_price_uzs: 21999,
+      sale_price_uzs: 14999,
+      sale_starts_at: FALLBACK_PRICING_SALE_START_AT,
+      sale_ends_at: FALLBACK_PRICING_SALE_END_AT,
+      feature_keys: FALLBACK_PLAN_FEATURE_KEYS.premium_monthly.slice(),
+      features: FALLBACK_PLAN_FEATURE_KEYS.premium_monthly.map(getPricingFeatureFallback),
+    },
+  ];
+}
+
+function localizeSubscriptionSnapshot(snapshot = {}) {
+  const planDescriptor = {
+    code: snapshot.planCode || 'free',
+    billing_period: snapshot.billingPeriod || (snapshot.planCode === 'free' ? 'free' : 'monthly'),
+    monthly_price_uzs: snapshot.originalMonthlyPriceUzs ?? snapshot.monthlyPriceUzs ?? 0,
+    original_monthly_price_uzs: snapshot.originalMonthlyPriceUzs ?? snapshot.monthlyPriceUzs ?? 0,
+    sale_price_uzs: snapshot.salePriceUzs ?? null,
+    sale_active: snapshot.saleActive === true,
+    sale_starts_at: snapshot.saleStartsAt || null,
+    sale_ends_at: snapshot.saleEndsAt || null,
+    feature_keys: Array.isArray(snapshot.featureKeys)
+      ? snapshot.featureKeys
+      : (Array.isArray(FALLBACK_PLAN_FEATURE_KEYS[snapshot.planCode]) ? FALLBACK_PLAN_FEATURE_KEYS[snapshot.planCode].slice() : []),
+    features: Array.isArray(snapshot.features) ? snapshot.features.slice() : [],
+  };
+  const pricing = resolvePlanPricingMeta(planDescriptor, new Date(snapshot.now || Date.now()));
+  return {
+    ...snapshot,
+    planTitle: getLocalizedPlanTitleByCode(planDescriptor.code),
+    priceLabel: formatPlanPriceLabelByAmount(pricing.currentPrice, pricing.billingPeriod),
+    monthlyPriceUzs: pricing.currentPrice,
+    originalMonthlyPriceUzs: pricing.originalPrice,
+    salePriceUzs: pricing.salePrice,
+    saleActive: pricing.saleActive,
+    saleStartsAt: pricing.saleStartsAt,
+    saleEndsAt: pricing.saleEndsAt,
+    discountAmountUzs: pricing.discountAmount,
+    featureKeys: planDescriptor.feature_keys.slice(),
+  };
+}
+
 function buildFallbackSubscriptionSnapshot(record = {}, options = {}) {
   const schemaReady = options.schemaReady !== false;
   const planCode = String(record.plan_code || '') === 'premium_monthly' ? 'premium_monthly' : 'free';
   const isPremium = schemaReady && planCode === 'premium_monthly' && String(record.subscription_status || '') === 'active';
+  const rawPlans = getFallbackPricingPlansRaw();
+  const rawPlan = rawPlans.find((item) => item.code === planCode) || rawPlans[0];
+  const pricing = resolvePlanPricingMeta(rawPlan, new Date(options.now || Date.now()));
   return {
     schemaReady,
     planCode,
     rawStatus: isPremium ? 'active' : 'free',
     effectiveStatus: isPremium ? 'active' : 'free',
-    planTitle: isPremium ? 'Premium' : 'Bepul',
-    priceLabel: isPremium ? '21 999 so\'m / oy' : '0 so\'m',
-    monthlyPriceUzs: isPremium ? 21999 : 0,
+    planTitle: getLocalizedPlanTitleByCode(planCode),
+    priceLabel: formatPlanPriceLabelByAmount(pricing.currentPrice, pricing.billingPeriod),
+    monthlyPriceUzs: pricing.currentPrice,
+    originalMonthlyPriceUzs: pricing.originalPrice,
+    salePriceUzs: pricing.salePrice,
+    saleActive: pricing.saleActive,
+    saleStartsAt: pricing.saleStartsAt,
+    saleEndsAt: pricing.saleEndsAt,
+    discountAmountUzs: pricing.discountAmount,
     isPremium,
     uiStatusLabel: isPremium ? 'Obuna bo\'lgan' : 'Obuna bo\'lmagan',
+    featureKeys: Array.isArray(rawPlan.feature_keys) ? rawPlan.feature_keys.slice() : [],
     limits: {
       activePlans: isPremium ? null : 1,
       activeDebts: isPremium ? null : 1,
@@ -306,9 +519,9 @@ function buildFallbackSubscriptionSnapshot(record = {}, options = {}) {
 function buildSubscriptionSnapshot(record = {}, options = {}) {
   const schemaReady = options.schemaReady !== false;
   if (typeof subscriptionHelpers.getSubscriptionSnapshot === 'function') {
-    return subscriptionHelpers.getSubscriptionSnapshot(record, { ...options, schemaReady });
+    return localizeSubscriptionSnapshot(subscriptionHelpers.getSubscriptionSnapshot(record, { ...options, schemaReady }));
   }
-  return buildFallbackSubscriptionSnapshot(record, { ...options, schemaReady });
+  return localizeSubscriptionSnapshot(buildFallbackSubscriptionSnapshot(record, { ...options, schemaReady }));
 }
 
 function syncSubscriptionState(record = null, options = {}) {
@@ -325,13 +538,10 @@ function getSubscriptionSnapshotLocal() {
 }
 
 function getPricingPlansData() {
-  if (typeof subscriptionHelpers.getPricingPlans === 'function') {
-    return subscriptionHelpers.getPricingPlans();
-  }
-  return [
-    { code: 'free', title: 'Bepul', price_label: '0 so\'m', monthly_price_uzs: 0, features: [] },
-    { code: 'premium_monthly', title: 'Premium', price_label: '21 999 so\'m / oy', monthly_price_uzs: 21999, features: [] },
-  ];
+  const rawPlans = typeof subscriptionHelpers.getPricingPlans === 'function'
+    ? subscriptionHelpers.getPricingPlans()
+    : getFallbackPricingPlansRaw();
+  return (rawPlans || []).map((plan) => localizePricingPlan(plan));
 }
 
 function getFeatureGateResult(featureKey, context = {}) {
@@ -1047,14 +1257,275 @@ function errorText(error, fallback = '') {
 function formatSubscriptionDate(value) {
   if (!value) return '—';
   try {
-    return new Intl.DateTimeFormat(localeTag(), {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    }).format(new Date(value));
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return String(value);
+    const day = String(date.getDate()).padStart(2, '0');
+    const year = date.getFullYear();
+    const monthIndex = date.getMonth();
+    const monthMap = currentLang === 'ru'
+      ? ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+      : currentLang === 'en'
+        ? ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+        : ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+    const month = monthMap[monthIndex] || '';
+    if (currentLang === 'en') return `${month} ${Number(day)}, ${year}`;
+    return `${Number(day)} ${month} ${year}`;
   } catch {
     return String(value);
   }
+}
+
+function formatSubscriptionDateTime(value) {
+  if (!value) return '—';
+  try {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat(localeTag(), {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(date);
+  } catch {
+    return formatSubscriptionDate(value);
+  }
+}
+
+function getSubscriptionRelativeDayInfo(value) {
+  const targetMs = toMs(value);
+  const now = Date.now();
+  const todayStart = getDayStartMs(now);
+  const targetStart = getDayStartMs(targetMs);
+  return Math.round((targetStart - todayStart) / DAY_MS);
+}
+
+function subscriptionText(uz, ru, en) {
+  return currentLang === 'ru' ? ru : currentLang === 'en' ? en : uz;
+}
+
+function getCountdownParts(value) {
+  const targetMs = typeof value === 'number' ? value : toMs(value);
+  const totalMs = Math.max(0, targetMs - Date.now());
+  const totalSeconds = Math.floor(totalMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const totalHours = Math.floor(totalSeconds / 3600);
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  return { totalMs, totalSeconds, totalHours, totalMinutes, days, hours, minutes, seconds };
+}
+
+function formatCountdownSummary(parts) {
+  if (!parts || parts.totalMs <= 0) {
+    return subscriptionText('Muddat tugadi', 'Срок истёк', 'Expired');
+  }
+  if (parts.days > 0) {
+    return `${parts.days} ${tt('countdown_days_short', 'kun')} ${parts.hours} ${tt('countdown_hours_short', 'soat')}`;
+  }
+  if (parts.totalHours > 0) {
+    return `${parts.totalHours} ${tt('countdown_hours_short', 'soat')} ${parts.minutes} ${tt('countdown_minutes_short', 'min')}`;
+  }
+  if (parts.totalMinutes > 0) {
+    return `${parts.totalMinutes} ${tt('countdown_minutes_short', 'min')} ${parts.seconds} ${tt('countdown_seconds_short', 'sek')}`;
+  }
+  return `${parts.seconds} ${tt('countdown_seconds_short', 'sek')}`;
+}
+
+function formatSaleEndsSummary(value) {
+  const formatted = formatSubscriptionDateTime(value);
+  return subscriptionText(
+    `${formatted} gacha`,
+    `До ${formatted}`,
+    `Until ${formatted}`
+  );
+}
+
+function getSubscriptionEndHint(value) {
+  if (!value) return subscriptionText(
+    'Faol muddat ko‘rsatilmagan',
+    'Срок действия не указан',
+    'Access period is not available'
+  );
+  const parts = getCountdownParts(value);
+  if (parts.totalMs > 0 && parts.totalMs < DAY_MS) {
+    return formatCountdownSummary(parts);
+  }
+  const diffDays = getSubscriptionRelativeDayInfo(value);
+  if (diffDays > 1) {
+    return subscriptionText(
+      `${diffDays} kun qoldi`,
+      `Осталось ${diffDays} дн`,
+      `${diffDays} days left`
+    );
+  }
+  if (diffDays === 1) {
+    return subscriptionText('1 kun qoldi', 'Остался 1 день', '1 day left');
+  }
+  if (diffDays === 0) {
+    return subscriptionText('Bugun tugaydi', 'Заканчивается сегодня', 'Ends today');
+  }
+  if (diffDays === -1) {
+    return subscriptionText('Kecha tugagan', 'Закончилось вчера', 'Ended yesterday');
+  }
+  return subscriptionText(
+    `${Math.abs(diffDays)} kun oldin tugagan`,
+    `Закончилось ${Math.abs(diffDays)} дн. назад`,
+    `Ended ${Math.abs(diffDays)} days ago`
+  );
+}
+
+function getSubscriptionPeriodBadge(snapshot) {
+  const target = snapshot?.accessUntil || snapshot?.subscriptionEndAt || snapshot?.trialEndAt || snapshot?.graceUntil;
+  if (!target) {
+    if (snapshot?.isPremium) {
+      return subscriptionText('Faol', 'Активно', 'Active');
+    }
+    return subscriptionText('Bepul', 'Бесплатно', 'Free');
+  }
+  return getSubscriptionEndHint(target);
+}
+
+function setCountdownUnitValue(unitEl, value, animate = false) {
+  if (!unitEl) return;
+  const nextValue = String(Math.max(0, Number(value) || 0)).padStart(2, '0');
+  const currentEl = unitEl.querySelector('.countdown-roll-current');
+  const nextEl = unitEl.querySelector('.countdown-roll-next');
+  const previousValue = unitEl.dataset.value || nextValue;
+  if (!currentEl || !nextEl) {
+    unitEl.textContent = nextValue;
+    unitEl.dataset.value = nextValue;
+    return;
+  }
+  if (!animate || previousValue === nextValue) {
+    currentEl.textContent = nextValue;
+    nextEl.textContent = nextValue;
+    unitEl.dataset.value = nextValue;
+    unitEl.classList.remove('is-animating');
+    unitEl.classList.remove('is-resetting');
+    return;
+  }
+  currentEl.textContent = previousValue;
+  nextEl.textContent = nextValue;
+  unitEl.dataset.value = nextValue;
+  unitEl.classList.remove('is-animating');
+  void unitEl.offsetWidth;
+  unitEl.classList.add('is-animating');
+  clearTimeout(unitEl.__countdownResetTimer);
+  unitEl.__countdownResetTimer = setTimeout(() => {
+    unitEl.classList.add('is-resetting');
+    currentEl.textContent = nextValue;
+    nextEl.textContent = nextValue;
+    unitEl.classList.remove('is-animating');
+    void unitEl.offsetWidth;
+    requestAnimationFrame(() => {
+      unitEl.classList.remove('is-resetting');
+    });
+  }, 460);
+}
+
+function syncCountdownBoard(boardEl, values = {}, options = {}) {
+  if (!boardEl) return;
+  const units = boardEl.querySelectorAll('.countdown-unit[data-unit]');
+  units.forEach((unitEl) => {
+    const unitKey = unitEl.dataset.unit;
+    const nextValue = values[unitKey] ?? 0;
+    setCountdownUnitValue(unitEl, nextValue, options.animate === true);
+    unitEl.dataset.urgent = options.urgent === true ? 'true' : 'false';
+  });
+}
+
+function updatePricingSaleCountdownUI(plan = null) {
+  const bannerEl = $('pricing-premium-sale-banner');
+  const summaryEl = $('pricing-premium-sale-summary');
+  const discountEl = $('pricing-premium-sale-discount');
+  const currentPriceEl = $('pricing-premium-price-current');
+  const oldWrapEl = $('pricing-premium-price-old-wrap');
+  const oldPriceEl = $('pricing-premium-price-old');
+  const countdownCardEl = $('pricing-premium-countdown-card');
+  const countdownSummaryEl = $('pricing-premium-countdown-summary');
+  const countdownBoardEl = $('pricing-premium-countdown-board');
+  const pricing = plan?.pricing || resolvePlanPricingMeta(plan || {}, new Date());
+
+  if (currentPriceEl) currentPriceEl.textContent = formatPriceAmountUzs(pricing.currentPrice);
+
+  const hasVisibleDiscount = pricing.saleActive && pricing.originalPrice > pricing.currentPrice;
+  if (oldWrapEl) oldWrapEl.style.display = hasVisibleDiscount ? 'inline-flex' : 'none';
+  if (oldPriceEl) oldPriceEl.textContent = formatPriceAmountUzs(pricing.originalPrice);
+  if (discountEl) discountEl.textContent = pricing.discountAmount > 0 ? `-${formatPriceAmountUzs(pricing.discountAmount)}` : '';
+
+  if (bannerEl) bannerEl.style.display = hasVisibleDiscount ? 'flex' : 'none';
+  if (summaryEl) {
+    summaryEl.textContent = hasVisibleDiscount && pricing.saleEndsAt
+      ? formatSaleEndsSummary(pricing.saleEndsAt)
+      : '';
+  }
+
+  const saleTarget = pricing.saleActive ? parseDateSafe(pricing.saleEndsAt) : null;
+  if (!saleTarget || !countdownCardEl || !countdownSummaryEl || !countdownBoardEl) {
+    if (countdownCardEl) countdownCardEl.style.display = 'none';
+    return;
+  }
+
+  const parts = getCountdownParts(saleTarget.getTime());
+  if (parts.totalMs <= 0) {
+    countdownCardEl.style.display = 'none';
+    return;
+  }
+
+  countdownCardEl.style.display = 'block';
+  countdownSummaryEl.textContent = formatCountdownSummary(parts);
+  syncCountdownBoard(countdownBoardEl, {
+    days: parts.days,
+    hours: parts.hours,
+    minutes: parts.minutes,
+    seconds: parts.seconds,
+  }, {
+    animate: countdownBoardEl.dataset.initialized === 'true',
+    urgent: parts.totalMs <= 3600000,
+  });
+  countdownBoardEl.dataset.initialized = 'true';
+}
+
+function updateSubscriptionExpiryCountdownUI(snapshot = null) {
+  const wrapEl = $('stg-subscription-live-countdown');
+  const summaryEl = $('stg-subscription-live-summary');
+  const boardEl = $('stg-subscription-live-board');
+  if (!wrapEl || !summaryEl || !boardEl) return;
+
+  const currentSnapshot = snapshot || getSubscriptionSnapshotLocal();
+  const target = parseDateSafe(
+    currentSnapshot?.accessUntil
+    || currentSnapshot?.subscriptionEndAt
+    || currentSnapshot?.trialEndAt
+    || currentSnapshot?.graceUntil
+  );
+
+  if (!target || !currentSnapshot?.isPremium) {
+    wrapEl.style.display = 'none';
+    return;
+  }
+
+  const parts = getCountdownParts(target.getTime());
+  const shouldShow = parts.totalMs > 0 && parts.totalMs < DAY_MS;
+  if (!shouldShow) {
+    wrapEl.style.display = 'none';
+    return;
+  }
+
+  wrapEl.style.display = 'flex';
+  summaryEl.textContent = formatCountdownSummary(parts);
+  syncCountdownBoard(boardEl, {
+    hours: parts.totalHours,
+    minutes: parts.minutes,
+    seconds: parts.seconds,
+  }, {
+    animate: boardEl.dataset.initialized === 'true',
+    urgent: parts.totalMs <= 3600000,
+  });
+  boardEl.dataset.initialized = 'true';
 }
 
 function extractUpgradeFeatureKey(error, fallbackFeatureKey = null) {
@@ -1242,10 +1713,18 @@ function updateSubscriptionUI() {
   const statusEl = $('stg-subscription-status');
   const priceEl = $('stg-subscription-price');
   const badgeEl = $('stg-subscription-status-badge');
+  const periodCard = $('stg-subscription-period-card');
+  const periodGrid = $('stg-subscription-period-grid');
+  const periodDivider = $('stg-subscription-period-divider');
+  const periodBadge = $('stg-subscription-period-badge');
   const startRow = $('stg-subscription-start-row');
   const endRow = $('stg-subscription-end-row');
   const startEl = $('stg-subscription-start');
   const endEl = $('stg-subscription-end');
+  const statusCardEl = $('stg-subscription-status-card');
+  const priceCardEl = $('stg-subscription-price-card');
+  const priceMetaEl = $('stg-subscription-price-meta');
+  const priceOldEl = $('stg-subscription-price-old');
   const noteEl = $('stg-subscription-note');
   if (planEl) planEl.textContent = planText;
   if (statusEl) statusEl.textContent = statusText;
@@ -1256,15 +1735,31 @@ function updateSubscriptionUI() {
   }
   if (startRow) startRow.style.display = startRowVisible ? 'flex' : 'none';
   if (endRow) endRow.style.display = endRowVisible ? 'flex' : 'none';
+  if (periodCard) periodCard.style.display = startRowVisible || endRowVisible ? 'flex' : 'none';
+  if (periodDivider) periodDivider.style.display = startRowVisible && endRowVisible ? 'block' : 'none';
+  if (periodGrid) periodGrid.dataset.layout = startRowVisible && endRowVisible ? 'split' : 'single';
+  if (periodBadge) {
+    periodBadge.textContent = getSubscriptionPeriodBadge(snapshot);
+    periodBadge.dataset.state = snapshot?.effectiveStatus || (snapshot?.isPremium ? 'active' : 'free');
+  }
   if (startEl) startEl.textContent = startValue;
   if (endEl) endEl.textContent = endValue;
+  if (statusCardEl) statusCardEl.dataset.state = statusBadge.tone || 'free';
+  if (priceCardEl) priceCardEl.dataset.state = snapshot?.planCode === 'premium_monthly' ? 'premium' : 'free';
+  if (priceMetaEl) {
+    const hasDiscount = !!(snapshot?.saleActive && snapshot?.originalMonthlyPriceUzs > snapshot?.monthlyPriceUzs);
+    priceMetaEl.style.display = hasDiscount ? 'flex' : 'none';
+  }
+  if (priceOldEl) {
+    priceOldEl.textContent = formatPriceAmountUzs(snapshot?.originalMonthlyPriceUzs || snapshot?.monthlyPriceUzs || 0);
+  }
   if (noteEl) {
     noteEl.textContent = snapshot?.schemaReady === false
       ? tt('subscription_syncing_hint', 'Tarif ma\'lumotlari bazadan yangilangach avtomatik ko‘rinadi.')
       : (
         snapshot?.isPremium
-          ? tt('subscription_premium_ready', 'Premium foydalanuvchi sifatida barcha premium gate funksiyalar ochiq.')
-          : tt('subscription_free_hint', 'Bepul tarifda 1 ta faol reja, 1 ta faol qarz va 1 ta faol limit mavjud.')
+          ? tt('subscription_premium_ready', 'Premium funksiyalar hozir faol.')
+          : tt('subscription_free_hint', 'Bepul tarifda asosiy funksiyalar va basic limitlar mavjud.')
       );
   }
 
@@ -1287,6 +1782,9 @@ function updateSubscriptionUI() {
     premiumAction.textContent = getPremiumPlanActionLabel(snapshot);
     premiumAction.disabled = !!(snapshot?.isPremium && snapshot?.planCode === 'premium_monthly');
   }
+
+  updatePricingSaleCountdownUI(premiumPlan);
+  updateSubscriptionExpiryCountdownUI(snapshot);
 
   const currentPlanEl = $('upgrade-current-plan');
   const currentStatusEl = $('upgrade-current-status');
@@ -1340,6 +1838,26 @@ function handleDashboardAnalyticsAction() {
   }
   return openDashboardAnalyticsPaywall();
 }
+
+let subscriptionUiTimer = null;
+
+function tickSubscriptionUiTimers() {
+  const plans = getPricingPlansData();
+  const premiumPlan = plans.find((item) => item.code === 'premium_monthly') || plans[1] || null;
+  updatePricingSaleCountdownUI(premiumPlan);
+  updateSubscriptionExpiryCountdownUI();
+}
+
+function ensureSubscriptionUiTimer() {
+  if (subscriptionUiTimer) return;
+  tickSubscriptionUiTimers();
+  subscriptionUiTimer = setInterval(tickSubscriptionUiTimers, 1000);
+}
+
+ensureSubscriptionUiTimer();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) tickSubscriptionUiTimers();
+});
 
 window.openSubscriptionPanel = openSubscriptionPanel;
 window.requestPremiumUpgrade = requestPremiumUpgrade;
@@ -1880,6 +2398,14 @@ function openFinanceSection() {
   return goTab(getPreferredFinanceTab());
 }
 
+async function ensureViewReady(tab) {
+  try {
+    await window.__KASSA_VIEW_BRIDGE__?.ensureViewMounted?.(tab);
+  } catch (error) {
+    console.warn('[view-bridge] mount failed', tab, error);
+  }
+}
+
 function getActiveTabFromDom() {
   const id = document.querySelector('.view.active')?.id || '';
   if (id === 'view-finance') return getFinanceViewTab();
@@ -1910,34 +2436,37 @@ function bindRouteBridge() {
 }
 
 function goTab(tab, opts = {}) {
-  try {
-    syncLegacyRoute(tab, opts);
-    vib('light');
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
+  return (async () => {
+    try {
+      syncLegacyRoute(tab, opts);
+      await ensureViewReady(tab);
+      vib('light');
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
 
-    if (isFinanceTab(tab)) lastFinanceTab = tab;
+      if (isFinanceTab(tab)) lastFinanceTab = tab;
 
-    const viewId = isFinanceTab(tab) ? 'view-finance' : `view-${tab}`;
-    const navId = isFinanceTab(tab) ? 'nb-finance' : `nb-${tab}`;
-    const v = $(viewId);
-    const n = $(navId);
-    if (isFinanceTab(tab) && v) v.dataset.activeTab = tab;
-    if (v) v.classList.add('active');
-    if (n) n.classList.add('active');
+      const viewId = isFinanceTab(tab) ? 'view-finance' : `view-${tab}`;
+      const navId = isFinanceTab(tab) ? 'nb-finance' : `nb-${tab}`;
+      const v = $(viewId);
+      const n = $(navId);
+      if (isFinanceTab(tab) && v) v.dataset.activeTab = tab;
+      if (v) v.classList.add('active');
+      if (n) n.classList.add('active');
 
-    if (tab === 'dash') renderAll();
-    if (tab === 'profile') {
-      renderProfileUI();
-      updateSettingsUI();
+      if (tab === 'dash') renderAll();
+      if (tab === 'profile') {
+        renderProfileUI();
+        updateSettingsUI();
+      }
+      if (tab === 'hist') {
+        renderHistory();
+        initHistScroll();
+      }
+    } catch (e) {
+      console.error('[goTab] Error:', e);
     }
-    if (tab === 'hist') {
-      renderHistory();
-      initHistScroll();
-    }
-  } catch (e) {
-    console.error('[goTab] Error:', e);
-  }
+  })();
 }
 
 bindRouteBridge();
@@ -2236,16 +2765,30 @@ function renderComparisonMetricRow(label, value, meta, metricKey) {
   `;
 }
 
+function renderAnalyticsCardHead(eyebrow, title, compareLabel) {
+  return `
+    <div class="dash-analytics-card-head">
+      <div class="dash-analytics-head-copy">
+        <div class="dash-analytics-eyebrow">${escapeHtml(eyebrow)}</div>
+        <h3>${escapeHtml(title)}</h3>
+        <div class="dash-period-meta">
+          <span class="dash-period-chip" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+              <path d="M3 4v4h4"></path>
+            </svg>
+          </span>
+          <span class="dash-period-text">${escapeHtml(compareLabel)}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderComparisonCard(model) {
   return `
     <article class="dash-analytics-card">
-      <div class="dash-analytics-card-head">
-        <div>
-          <div class="dash-analytics-eyebrow">${escapeHtml(tt('dashboard_widget_compare_label', 'Solishtirish'))}</div>
-          <h3>${escapeHtml(model.title)}</h3>
-        </div>
-        <span class="dash-period-chip">${escapeHtml(model.compareLabel)}</span>
-      </div>
+      ${renderAnalyticsCardHead(tt('dashboard_widget_compare_label', 'Solishtirish'), model.title, model.compareLabel)}
       <div class="dash-compare-list">
         ${renderComparisonMetricRow(tt('income', 'Kirim'), model.currentSummary.income, model.deltas.income, 'income')}
         ${renderComparisonMetricRow(tt('expense', 'Chiqim'), model.currentSummary.expense, model.deltas.expense, 'expense')}
@@ -2259,13 +2802,7 @@ function renderCategoryCard(model) {
   if (!model.items.length) {
     return `
       <article class="dash-analytics-card">
-        <div class="dash-analytics-card-head">
-          <div>
-            <div class="dash-analytics-eyebrow">${escapeHtml(tt('expense', 'Chiqim'))}</div>
-            <h3>${escapeHtml(model.title)}</h3>
-          </div>
-          <span class="dash-period-chip">${escapeHtml(model.compareLabel)}</span>
-        </div>
+        ${renderAnalyticsCardHead(tt('expense', 'Chiqim'), model.title, model.compareLabel)}
         <div class="dash-widget-empty">
           <strong>${escapeHtml(tt('dashboard_widget_empty_title', 'Hali ma‘lumot yetarli emas'))}</strong>
           <span>${escapeHtml(tt('dashboard_widget_empty_body', 'Xarajatlar paydo bo‘lgach kategoriya bo‘yicha ulush va o‘sish shu yerda ko‘rinadi.'))}</span>
@@ -2276,13 +2813,7 @@ function renderCategoryCard(model) {
 
   return `
     <article class="dash-analytics-card">
-      <div class="dash-analytics-card-head">
-        <div>
-          <div class="dash-analytics-eyebrow">${escapeHtml(tt('expense', 'Chiqim'))}</div>
-          <h3>${escapeHtml(model.title)}</h3>
-        </div>
-        <span class="dash-period-chip">${escapeHtml(model.compareLabel)}</span>
-      </div>
+      ${renderAnalyticsCardHead(tt('expense', 'Chiqim'), model.title, model.compareLabel)}
       <div class="dash-category-list">
         ${model.items.map((item) => `
           <div class="dash-category-row">
@@ -3810,6 +4341,8 @@ function applyLang() {
   renderProfileUI();
   updateNotificationSettingsUI();
 }
+
+window.applyLang = applyLang;
 
 async function changeLang(lang) {
   await loadLang(lang);

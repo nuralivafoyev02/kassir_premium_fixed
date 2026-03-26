@@ -1210,6 +1210,7 @@ body {
     letter-spacing: -0.6px;
     line-height: 1.08;
     color: var(--text);
+    font-variant-numeric: tabular-nums;
 }
 
 .dash-widget-card.tone-category .dash-widget-value {
@@ -1297,14 +1298,21 @@ body {
 .dash-analytics-card-head {
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
     gap: 10px;
+}
+
+.dash-analytics-head-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
 .dash-analytics-card h3 {
     font-size: 18px;
     line-height: 1.2;
     letter-spacing: -0.4px;
+    margin: 0;
 }
 
 .dash-analytics-eyebrow {
@@ -1316,17 +1324,46 @@ body {
     margin-bottom: 4px;
 }
 
-.dash-period-chip {
+.dash-period-meta {
     display: inline-flex;
     align-items: center;
-    padding: 7px 10px;
+    align-self: flex-start;
+    max-width: 100%;
+    min-width: 0;
+    gap: 8px;
+    padding: 6px 10px 6px 8px;
     border-radius: 999px;
     border: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.03);
+}
+
+.dash-period-chip {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(241, 185, 59, 0.14);
+    color: #ffd978;
+    flex-shrink: 0;
+}
+
+.dash-period-chip svg {
+    width: 12px;
+    height: 12px;
+    stroke-width: 2;
+}
+
+.dash-period-text {
+    min-width: 0;
     color: var(--muted);
     font-size: 11px;
     font-weight: 700;
-    text-align: right;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .dash-compare-list {
@@ -1355,6 +1392,7 @@ body {
 .dash-compare-row strong {
     font-size: 14px;
     line-height: 1.2;
+    font-variant-numeric: tabular-nums;
 }
 
 .dash-delta-badge {
@@ -1368,6 +1406,7 @@ body {
     font-size: 12px;
     font-weight: 800;
     border: 1px solid transparent;
+    font-variant-numeric: tabular-nums;
 }
 
 .dash-delta-badge.good {
@@ -1423,6 +1462,7 @@ body {
 .dash-category-row-head span,
 .dash-category-row-meta span:first-child {
     color: var(--muted);
+    font-variant-numeric: tabular-nums;
 }
 
 .dash-category-bar {
@@ -1530,12 +1570,16 @@ body.light .dash-analytics-card.is-locked {
         rgba(255, 255, 255, 0.96);
 }
 
-body.light .dash-period-chip,
+body.light .dash-period-meta,
 body.light .dash-compare-row,
 body.light .dash-widget-empty,
 body.light .dash-analytics-preview-line {
     background: rgba(15, 23, 42, 0.04);
     border-color: rgba(15, 23, 42, 0.07);
+}
+
+body.light .dash-period-chip {
+    background: rgba(241, 185, 59, 0.14);
 }
 
 @media (max-width: 380px) {
@@ -3070,8 +3114,8 @@ body.light .notif-card {
 .subscription-current-card {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 18px;
+    gap: 18px;
+    padding: 20px;
     border-radius: 24px;
     border: 1px solid rgba(241, 185, 59, 0.16);
     background:
@@ -3084,6 +3128,7 @@ body.light .notif-card {
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
 }
 
 .subscription-eyebrow {
@@ -3095,7 +3140,8 @@ body.light .notif-card {
 
 .subscription-current-card h3 {
     margin: 6px 0 0;
-    font-size: 24px;
+    font-size: 26px;
+    line-height: 1.08;
     letter-spacing: -0.03em;
 }
 
@@ -3103,14 +3149,15 @@ body.light .notif-card {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 12px;
+    padding: 9px 14px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(255, 255, 255, 0.06);
     color: var(--text);
     font-size: 12px;
     font-weight: 700;
-    white-space: nowrap;
+    white-space: normal;
+    line-height: 1.2;
 }
 
 .subscription-status-badge[data-state="premium"],
@@ -3136,40 +3183,254 @@ body.light .notif-card {
     color: var(--muted);
 }
 
-.subscription-meta-grid {
+.subscription-facts-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.subscription-fact-item,
+.subscription-period-card,
+.upgrade-current-card>div {
+    position: relative;
+    padding: 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.02));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.subscription-fact-item {
+    min-height: 108px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
     gap: 10px;
 }
 
-.subscription-meta-item,
-.upgrade-current-card>div {
-    padding: 12px;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.03);
+.subscription-fact-item[data-state="premium"] {
+    border-color: rgba(241, 185, 59, 0.18);
+    background:
+        radial-gradient(circle at top right, rgba(241, 185, 59, 0.1), transparent 36%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
 }
 
-.subscription-meta-item span,
+.subscription-fact-item[data-state="expired"] {
+    border-color: rgba(239, 68, 68, 0.16);
+    background:
+        radial-gradient(circle at top right, rgba(239, 68, 68, 0.08), transparent 36%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+}
+
+.subscription-fact-item span,
+.subscription-period-item span,
 .upgrade-current-card span {
     display: block;
     font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+}
+
+.subscription-fact-item strong,
+.subscription-period-item strong,
+.upgrade-current-card strong {
+    display: block;
+    font-size: 18px;
+    line-height: 1.2;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.subscription-fact-item strong {
+    margin-top: auto;
+}
+
+.subscription-price-fact {
+    gap: 12px;
+}
+
+.subscription-price-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: auto;
+}
+
+.subscription-price-old {
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.46);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+    text-decoration-color: rgba(255, 255, 255, 0.2);
+}
+
+.subscription-price-sale-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    color: #ffd978;
+    border: 1px solid rgba(241, 185, 59, 0.24);
+    background: rgba(241, 185, 59, 0.12);
+}
+
+.subscription-fact-item[data-state="premium"] strong,
+.subscription-status-badge[data-state="premium"],
+.subscription-status-badge.premium {
+    color: #fff1c7;
+}
+
+.subscription-fact-item strong {
+    word-break: break-word;
+}
+
+.subscription-fact-item#stg-subscription-price-card strong {
+    color: #dbeafe;
+}
+
+.subscription-fact-item[data-state="trial"] strong {
+    color: #bfdbfe;
+}
+
+.subscription-fact-item[data-state="expired"] strong {
+    color: #fecdd3;
+}
+
+.subscription-period-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.subscription-period-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.subscription-period-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: -0.01em;
+}
+
+.subscription-period-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.subscription-period-badge[data-state="active"],
+.subscription-period-badge[data-state="grace"],
+.subscription-period-badge[data-state="canceled"] {
+    background: rgba(16, 185, 129, 0.14);
+    border-color: rgba(16, 185, 129, 0.22);
+    color: #bbf7d0;
+}
+
+.subscription-period-badge[data-state="trial"] {
+    background: rgba(59, 130, 246, 0.14);
+    border-color: rgba(59, 130, 246, 0.22);
+    color: #bfdbfe;
+}
+
+.subscription-period-badge[data-state="expired"] {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.18);
+    color: #fecdd3;
+}
+
+.subscription-period-badge[data-state="free"] {
+    background: rgba(148, 163, 184, 0.1);
+    border-color: rgba(148, 163, 184, 0.12);
     color: var(--muted);
 }
 
-.subscription-meta-item strong,
-.upgrade-current-card strong {
-    display: block;
-    margin-top: 6px;
+.subscription-period-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+    gap: 12px;
+    align-items: stretch;
+}
+
+.subscription-period-grid[data-layout="single"] {
+    grid-template-columns: 1fr;
+}
+
+.subscription-period-item {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.subscription-period-item strong {
+    font-size: 20px;
+    line-height: 1.18;
+}
+
+.subscription-period-divider {
+    width: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+}
+
+.subscription-live-countdown {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 2px;
+}
+
+.subscription-live-head,
+.pricing-countdown-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.subscription-live-label,
+.pricing-countdown-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+}
+
+.subscription-live-head strong,
+.pricing-countdown-head strong {
     font-size: 15px;
-    line-height: 1.45;
+    line-height: 1.25;
+    letter-spacing: -0.02em;
     color: var(--text);
+    font-variant-numeric: tabular-nums;
 }
 
 .subscription-note {
     color: var(--muted);
-    font-size: 13px;
-    line-height: 1.6;
+    font-size: 14px;
+    line-height: 1.55;
 }
 
 .pricing-grid {
@@ -3237,17 +3498,188 @@ body.light .notif-card {
     background: rgba(241, 185, 59, 0.12);
 }
 
+.pricing-sale-banner,
+.pricing-countdown-card {
+    border-radius: 18px;
+    border: 1px solid rgba(241, 185, 59, 0.16);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.02));
+    padding: 14px;
+}
+
+.pricing-sale-banner {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.pricing-sale-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.pricing-sale-label {
+    font-size: 12px;
+    font-weight: 800;
+    color: #ffd978;
+}
+
+.pricing-sale-copy strong {
+    font-size: 15px;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+    color: var(--text);
+}
+
+.pricing-sale-discount {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #fff1c7;
+    border: 1px solid rgba(241, 185, 59, 0.22);
+    background: rgba(241, 185, 59, 0.12);
+}
+
+.pricing-price-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.pricing-price-old {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.pricing-price-old strong {
+    font-size: 15px;
+    font-weight: 800;
+    color: rgba(255, 255, 255, 0.62);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+    text-decoration-color: rgba(255, 255, 255, 0.24);
+}
+
 .pricing-price {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
     font-size: 30px;
     font-weight: 800;
     letter-spacing: -0.04em;
     line-height: 1.1;
 }
 
+.pricing-price strong {
+    font-size: inherit;
+    font-weight: inherit;
+    letter-spacing: inherit;
+    line-height: inherit;
+    color: var(--text);
+}
+
 .pricing-price span {
     font-size: 15px;
     font-weight: 600;
     color: var(--muted);
+}
+
+.countdown-board {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.countdown-board-compact {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.countdown-unit {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 10px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    text-align: center;
+}
+
+.countdown-unit small {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.countdown-roll-window {
+    position: relative;
+    display: block;
+    height: 1.1em;
+    overflow: hidden;
+    font-size: 24px;
+    font-weight: 900;
+    line-height: 1.1;
+    letter-spacing: -0.05em;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+
+.countdown-roll-current,
+.countdown-roll-next {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.42s ease;
+}
+
+.countdown-roll-current {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+.countdown-roll-next {
+    transform: translateY(100%);
+    opacity: 0;
+}
+
+.countdown-unit.is-animating .countdown-roll-current {
+    transform: translateY(-100%);
+    opacity: 0;
+}
+
+.countdown-unit.is-animating .countdown-roll-next {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+.countdown-unit.is-resetting .countdown-roll-current,
+.countdown-unit.is-resetting .countdown-roll-next {
+    transition: none;
+}
+
+.countdown-unit[data-urgent="true"] {
+    border-color: rgba(241, 185, 59, 0.24);
+    background:
+        radial-gradient(circle at top center, rgba(241, 185, 59, 0.14), transparent 55%),
+        rgba(255, 255, 255, 0.04);
 }
 
 .pricing-card-copy {
@@ -3398,7 +3830,8 @@ body.light .upgrade-close-icon::after {
 
 body.light .subscription-current-card,
 body.light .pricing-card,
-body.light .subscription-meta-item,
+body.light .subscription-fact-item,
+body.light .subscription-period-card,
 body.light .upgrade-current-card>div {
     background: rgba(15, 23, 42, 0.03);
     border-color: rgba(15, 23, 42, 0.08);
@@ -3426,8 +3859,58 @@ body.light .upgrade-body {
     color: #64748b;
 }
 
+body.light .subscription-price-old,
+body.light .pricing-price-old strong {
+    color: rgba(15, 23, 42, 0.48);
+    text-decoration-color: rgba(15, 23, 42, 0.18);
+}
+
+body.light .pricing-sale-banner,
+body.light .pricing-countdown-card,
+body.light .countdown-unit {
+    background: rgba(15, 23, 42, 0.03);
+    border-color: rgba(15, 23, 42, 0.08);
+}
+
+body.light .pricing-sale-label,
+body.light .pricing-sale-discount,
+body.light .subscription-price-sale-badge {
+    color: #7c5a06;
+}
+
+body.light .subscription-fact-item[data-state="premium"] strong {
+    color: #7c5a06;
+}
+
+body.light .subscription-fact-item[data-state="trial"] strong {
+    color: #1d4ed8;
+}
+
+body.light .subscription-fact-item[data-state="expired"] strong {
+    color: #be123c;
+}
+
+body.light .subscription-fact-item#stg-subscription-price-card strong {
+    color: #1d4ed8;
+}
+
+body.light .subscription-period-badge[data-state="active"],
+body.light .subscription-period-badge[data-state="grace"],
+body.light .subscription-period-badge[data-state="canceled"] {
+    color: #15803d;
+}
+
+body.light .subscription-period-badge[data-state="trial"] {
+    color: #1d4ed8;
+}
+
+body.light .subscription-period-badge[data-state="expired"] {
+    color: #be123c;
+}
+
 @media (max-width: 380px) {
-    .subscription-meta-grid,
+    .subscription-facts-grid,
+    .subscription-period-grid,
     .upgrade-current-card {
         grid-template-columns: 1fr;
     }
@@ -3435,6 +3918,31 @@ body.light .upgrade-body {
     .subscription-current-top,
     .pricing-card-top {
         flex-direction: column;
+    }
+
+    .subscription-period-divider {
+        display: none;
+    }
+}
+
+@media (max-width: 520px) {
+    .pricing-sale-banner,
+    .subscription-live-head,
+    .pricing-countdown-head {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .countdown-board {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .countdown-board-compact {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .pricing-price {
+        align-items: flex-start;
     }
 }
 

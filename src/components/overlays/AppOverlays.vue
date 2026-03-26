@@ -351,22 +351,65 @@
           <span class="subscription-status-badge" id="stg-subscription-status-badge">Obuna bo'lmagan</span>
         </div>
 
-        <div class="subscription-meta-grid">
-          <div class="subscription-meta-item">
+        <div class="subscription-facts-grid">
+          <div class="subscription-fact-item" id="stg-subscription-status-card">
             <span data-i18n="subscription_status_label">Holat</span>
             <strong id="stg-subscription-status">Obuna bo'lmagan</strong>
           </div>
-          <div class="subscription-meta-item">
+          <div class="subscription-fact-item subscription-price-fact" id="stg-subscription-price-card">
             <span data-i18n="subscription_price_label">Narx</span>
             <strong id="stg-subscription-price">0 so'm</strong>
+            <div class="subscription-price-meta" id="stg-subscription-price-meta" style="display:none">
+              <span class="subscription-price-old" id="stg-subscription-price-old">21 999 so'm</span>
+              <span class="subscription-price-sale-badge" id="stg-subscription-price-sale-badge" data-i18n="pricing_sale_label">1 oylik chegirma</span>
+            </div>
           </div>
-          <div class="subscription-meta-item" id="stg-subscription-start-row" style="display:none">
-            <span data-i18n="subscription_start_label">Boshlangan sana</span>
-            <strong id="stg-subscription-start">—</strong>
+        </div>
+
+        <div class="subscription-period-card" id="stg-subscription-period-card" style="display:none">
+          <div class="subscription-period-head">
+            <span class="subscription-period-label" data-i18n="subscription_period_label">Faol davr</span>
+            <span class="subscription-period-badge" id="stg-subscription-period-badge">Faol</span>
           </div>
-          <div class="subscription-meta-item" id="stg-subscription-end-row" style="display:none">
-            <span data-i18n="subscription_end_label">Tugash sana</span>
-            <strong id="stg-subscription-end">—</strong>
+          <div class="subscription-period-grid" id="stg-subscription-period-grid">
+            <div class="subscription-period-item" id="stg-subscription-start-row" style="display:none">
+              <span data-i18n="subscription_start_label">Boshlangan sana</span>
+              <strong id="stg-subscription-start">—</strong>
+            </div>
+            <div class="subscription-period-divider" id="stg-subscription-period-divider" aria-hidden="true"></div>
+            <div class="subscription-period-item" id="stg-subscription-end-row" style="display:none">
+              <span data-i18n="subscription_end_label">Tugash sana</span>
+              <strong id="stg-subscription-end">—</strong>
+            </div>
+          </div>
+          <div class="subscription-live-countdown" id="stg-subscription-live-countdown" style="display:none">
+            <div class="subscription-live-head">
+              <span class="subscription-live-label" data-i18n="subscription_live_countdown_label">Tugashiga</span>
+              <strong id="stg-subscription-live-summary">—</strong>
+            </div>
+            <div class="countdown-board countdown-board-compact" id="stg-subscription-live-board">
+              <div class="countdown-unit" data-unit="hours">
+                <span class="countdown-roll-window">
+                  <span class="countdown-roll-current">00</span>
+                  <span class="countdown-roll-next">00</span>
+                </span>
+                <small data-i18n="countdown_hours_short">soat</small>
+              </div>
+              <div class="countdown-unit" data-unit="minutes">
+                <span class="countdown-roll-window">
+                  <span class="countdown-roll-current">00</span>
+                  <span class="countdown-roll-next">00</span>
+                </span>
+                <small data-i18n="countdown_minutes_short">min</small>
+              </div>
+              <div class="countdown-unit" data-unit="seconds">
+                <span class="countdown-roll-window">
+                  <span class="countdown-roll-current">00</span>
+                  <span class="countdown-roll-next">00</span>
+                </span>
+                <small data-i18n="countdown_seconds_short">sek</small>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -399,7 +442,59 @@
             </div>
             <span class="pricing-card-chip premium" data-i18n="pricing_premium_chip">Eng ommabop</span>
           </div>
-          <div class="pricing-price">21 999 so'm <span data-i18n="pricing_monthly_suffix">/ oy</span></div>
+          <div class="pricing-sale-banner" id="pricing-premium-sale-banner" style="display:none">
+            <div class="pricing-sale-copy">
+              <span class="pricing-sale-label" data-i18n="pricing_sale_label">1 oylik chegirma</span>
+              <strong id="pricing-premium-sale-summary">26 aprel 2026 gacha</strong>
+            </div>
+            <span class="pricing-sale-discount" id="pricing-premium-sale-discount">-7 000 so'm</span>
+          </div>
+          <div class="pricing-price-stack">
+            <div class="pricing-price-old" id="pricing-premium-price-old-wrap" style="display:none">
+              <span data-i18n="pricing_old_price_label">Avval</span>
+              <strong id="pricing-premium-price-old">21 999 so'm</strong>
+            </div>
+            <div class="pricing-price">
+              <strong id="pricing-premium-price-current">14 999 so'm</strong>
+              <span data-i18n="pricing_monthly_suffix">/ oy</span>
+            </div>
+          </div>
+          <div class="pricing-countdown-card" id="pricing-premium-countdown-card" style="display:none">
+            <div class="pricing-countdown-head">
+              <span class="pricing-countdown-label" data-i18n="pricing_sale_countdown_label">Aksiya tugashiga</span>
+              <strong id="pricing-premium-countdown-summary">—</strong>
+            </div>
+            <div class="countdown-board" id="pricing-premium-countdown-board">
+              <div class="countdown-unit" data-unit="days">
+                <span class="countdown-roll-window">
+                  <span class="countdown-roll-current">00</span>
+                  <span class="countdown-roll-next">00</span>
+                </span>
+                <small data-i18n="countdown_days_short">kun</small>
+              </div>
+              <div class="countdown-unit" data-unit="hours">
+                <span class="countdown-roll-window">
+                  <span class="countdown-roll-current">00</span>
+                  <span class="countdown-roll-next">00</span>
+                </span>
+                <small data-i18n="countdown_hours_short">soat</small>
+              </div>
+              <div class="countdown-unit" data-unit="minutes">
+                <span class="countdown-roll-window">
+                  <span class="countdown-roll-current">00</span>
+                  <span class="countdown-roll-next">00</span>
+                </span>
+                <small data-i18n="countdown_minutes_short">min</small>
+              </div>
+              <div class="countdown-unit" data-unit="seconds">
+                <span class="countdown-roll-window">
+                  <span class="countdown-roll-current">00</span>
+                  <span class="countdown-roll-next">00</span>
+                </span>
+                <small data-i18n="countdown_seconds_short">sek</small>
+              </div>
+            </div>
+          </div>
           <p class="pricing-card-copy" data-i18n="pricing_premium_copy">Cheksiz limitlar, kengaytirilgan eslatmalar va
             premium hisobotlar uchun.</p>
           <ul class="pricing-feature-list" id="pricing-premium-features"></ul>

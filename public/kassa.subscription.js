@@ -21,6 +21,36 @@
     GRACE: 'grace',
   });
 
+  var PREMIUM_MONTHLY_LIST_PRICE_UZS = 21999;
+  var PREMIUM_MONTHLY_SALE_PRICE_UZS = 14999;
+  var PREMIUM_MONTHLY_SALE_START_AT = '2026-03-26T00:00:00+05:00';
+  var PREMIUM_MONTHLY_SALE_END_AT = '2026-04-26T23:59:59+05:00';
+
+  var PRICING_FEATURE_KEYS = Object.freeze({
+    free: Object.freeze([
+      'basic_income',
+      'basic_expense',
+      'history',
+      'basic_dashboard',
+      'basic_categories',
+      'basic_sync',
+      'one_plan',
+      'one_debt',
+      'one_limit',
+      'basic_reminder',
+    ]),
+    premium_monthly: Object.freeze([
+      'unlimited_plans',
+      'unlimited_debts',
+      'unlimited_limits',
+      'morning_evening_reminders',
+      'custom_reminders',
+      'pdf_reports',
+      'deep_analytics',
+      'ai_ready',
+    ]),
+  });
+
   var PRICING_PLAN_MAP = Object.freeze({
     free: Object.freeze({
       code: PLAN_CODES.FREE,
@@ -29,14 +59,20 @@
       billing_period: 'free',
       monthly_price_uzs: 0,
       highlight: false,
+      feature_keys: PRICING_FEATURE_KEYS.free,
     }),
     premium_monthly: Object.freeze({
       code: PLAN_CODES.PREMIUM_MONTHLY,
       title: 'Premium',
-      price_label: '21 999 so\'m / oy',
+      price_label: '14 999 so\'m / oy',
       billing_period: 'monthly',
-      monthly_price_uzs: 21999,
+      monthly_price_uzs: PREMIUM_MONTHLY_LIST_PRICE_UZS,
+      list_price_uzs: PREMIUM_MONTHLY_LIST_PRICE_UZS,
+      sale_price_uzs: PREMIUM_MONTHLY_SALE_PRICE_UZS,
+      sale_start_at: PREMIUM_MONTHLY_SALE_START_AT,
+      sale_end_at: PREMIUM_MONTHLY_SALE_END_AT,
       highlight: true,
+      feature_keys: PRICING_FEATURE_KEYS.premium_monthly,
     }),
   });
 
@@ -162,6 +198,44 @@
     return parseDate(input) || new Date();
   }
 
+  function formatPriceLabel(amount, billingPeriod) {
+    var value = Number(amount);
+    var normalized = Number.isFinite(value) && value > 0
+      ? String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' so\'m'
+      : '0 so\'m';
+    return billingPeriod === 'monthly' ? normalized + ' / oy' : normalized;
+  }
+
+  function resolvePlanPricing(plan, now) {
+    var currentNow = resolveNow(now);
+    var currentMs = currentNow.getTime();
+    var saleStartAt = parseDate(plan && plan.sale_start_at);
+    var saleEndAt = parseDate(plan && plan.sale_end_at);
+    var listPrice = Number(plan && (plan.list_price_uzs || plan.monthly_price_uzs));
+    var salePrice = Number(plan && plan.sale_price_uzs);
+    var canUseSale = (
+      plan &&
+      plan.code === PLAN_CODES.PREMIUM_MONTHLY &&
+      Number.isFinite(salePrice) &&
+      salePrice > 0 &&
+      (!saleStartAt || saleStartAt.getTime() <= currentMs) &&
+      (!!saleEndAt && saleEndAt.getTime() > currentMs)
+    );
+    var currentPrice = canUseSale ? salePrice : listPrice;
+    var originalPrice = Number.isFinite(listPrice) && listPrice > 0 ? listPrice : currentPrice;
+    if (!Number.isFinite(currentPrice) || currentPrice < 0) currentPrice = 0;
+    if (!Number.isFinite(originalPrice) || originalPrice < currentPrice) originalPrice = currentPrice;
+    return {
+      sale_active: canUseSale,
+      sale_start_at: saleStartAt ? saleStartAt.toISOString() : null,
+      sale_end_at: saleEndAt ? saleEndAt.toISOString() : null,
+      current_price_uzs: currentPrice,
+      original_price_uzs: originalPrice,
+      sale_price_uzs: canUseSale ? currentPrice : (Number.isFinite(salePrice) && salePrice > 0 ? salePrice : null),
+      discount_amount_uzs: canUseSale ? Math.max(0, originalPrice - currentPrice) : 0,
+    };
+  }
+
   function hasSubscriptionSchema(record) {
     if (!record || typeof record !== 'object') return false;
     return SUBSCRIPTION_FIELDS.some(function (field) {
@@ -272,6 +346,7 @@
     var plan = PRICING_PLAN_MAP[planCode] || PRICING_PLAN_MAP[PLAN_CODES.FREE];
     var accessUntil = resolveAccessUntil(record || {}, effectiveStatus);
     var isPremium = hasPremiumAccessFromStatus(planCode, effectiveStatus);
+    var pricing = resolvePlanPricing(plan, now);
 
     return {
       schemaReady: schemaReady,
@@ -280,9 +355,16 @@
       rawStatus: rawStatus,
       effectiveStatus: effectiveStatus,
       planTitle: plan.title,
-      priceLabel: plan.price_label,
-      monthlyPriceUzs: plan.monthly_price_uzs,
+      priceLabel: formatPriceLabel(pricing.current_price_uzs, plan.billing_period),
+      monthlyPriceUzs: pricing.current_price_uzs,
+      originalMonthlyPriceUzs: pricing.original_price_uzs,
+      salePriceUzs: pricing.sale_price_uzs,
+      discountAmountUzs: pricing.discount_amount_uzs,
+      saleActive: pricing.sale_active,
+      saleStartsAt: pricing.sale_start_at,
+      saleEndsAt: pricing.sale_end_at,
       billingPeriod: plan.billing_period,
+      featureKeys: Array.isArray(plan.feature_keys) ? plan.feature_keys.slice() : [],
       subscriptionStartAt: parseDate(record && (record.subscription_start_at || record.subscriptionStartAt)),
       subscriptionEndAt: parseDate(record && (record.subscription_end_at || record.subscriptionEndAt)),
       trialEndAt: parseDate(record && (record.trial_end_at || record.trialEndAt)),
@@ -323,19 +405,36 @@
   }
 
   function getPricingPlans() {
+    var now = new Date();
+    var freePricing = resolvePlanPricing(PRICING_PLAN_MAP.free, now);
+    var premiumPricing = resolvePlanPricing(PRICING_PLAN_MAP.premium_monthly, now);
     return [
       {
         code: PLAN_CODES.FREE,
         title: PRICING_PLAN_MAP.free.title,
-        price_label: PRICING_PLAN_MAP.free.price_label,
-        monthly_price_uzs: PRICING_PLAN_MAP.free.monthly_price_uzs,
+        price_label: formatPriceLabel(freePricing.current_price_uzs, PRICING_PLAN_MAP.free.billing_period),
+        monthly_price_uzs: freePricing.current_price_uzs,
+        original_monthly_price_uzs: freePricing.original_price_uzs,
+        sale_price_uzs: freePricing.sale_price_uzs,
+        discount_amount_uzs: freePricing.discount_amount_uzs,
+        sale_active: freePricing.sale_active,
+        sale_starts_at: freePricing.sale_start_at,
+        sale_ends_at: freePricing.sale_end_at,
+        feature_keys: Array.isArray(PRICING_PLAN_MAP.free.feature_keys) ? PRICING_PLAN_MAP.free.feature_keys.slice() : [],
         features: FREE_FEATURES.slice(),
       },
       {
         code: PLAN_CODES.PREMIUM_MONTHLY,
         title: PRICING_PLAN_MAP.premium_monthly.title,
-        price_label: PRICING_PLAN_MAP.premium_monthly.price_label,
-        monthly_price_uzs: PRICING_PLAN_MAP.premium_monthly.monthly_price_uzs,
+        price_label: formatPriceLabel(premiumPricing.current_price_uzs, PRICING_PLAN_MAP.premium_monthly.billing_period),
+        monthly_price_uzs: premiumPricing.current_price_uzs,
+        original_monthly_price_uzs: premiumPricing.original_price_uzs,
+        sale_price_uzs: premiumPricing.sale_price_uzs,
+        discount_amount_uzs: premiumPricing.discount_amount_uzs,
+        sale_active: premiumPricing.sale_active,
+        sale_starts_at: premiumPricing.sale_start_at,
+        sale_ends_at: premiumPricing.sale_end_at,
+        feature_keys: Array.isArray(PRICING_PLAN_MAP.premium_monthly.feature_keys) ? PRICING_PLAN_MAP.premium_monthly.feature_keys.slice() : [],
         features: PREMIUM_FEATURES.slice(),
       },
     ];
@@ -458,7 +557,9 @@
     FEATURE_GATES: FEATURE_GATES,
     FREE_FEATURES: FREE_FEATURES,
     PREMIUM_FEATURES: PREMIUM_FEATURES,
+    PRICING_FEATURE_KEYS: PRICING_FEATURE_KEYS,
     PRICING_PLAN_MAP: PRICING_PLAN_MAP,
+    resolvePlanPricing: resolvePlanPricing,
     normalizePlanCode: normalizePlanCode,
     normalizeSubscriptionStatus: normalizeSubscriptionStatus,
     hasSubscriptionSchema: hasSubscriptionSchema,

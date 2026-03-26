@@ -25,7 +25,9 @@ Joriy pricing modeli:
 
 Premium narxi:
 
-- `21 999 so'm / oy`
+- `14 999 so'm / oy`
+- aksiya oldingi narx: `21 999 so'm / oy`
+- aksiya muddati: `2026-yil 26-aprel, 23:59` gacha
 
 Ichki status arxitekturasi:
 
@@ -224,7 +226,7 @@ Smoke-check natijalari:
 - premium snapshot `premium_monthly`
 - free user uchun report gate `false`
 - premium user uchun report gate `true`
-- premium narxi `21 999 so'm / oy`
+- premium narxi `14 999 so'm / oy`
 
 ## 11. Qisqa xulosa
 
