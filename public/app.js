@@ -371,16 +371,18 @@ function syncNotificationUserState(record = null, options = {}) {
     notificationEnabled,
     lastReminderAt: schemaReady ? raw.last_daily_reminder_at || null : null,
     lastReportAt: schemaReady ? raw.last_daily_report_at || null : null,
-    status: options.status || (schemaReady ? (notificationEnabled ? 'ready' : 'disabled') : pushNotificationState.status),
+    status: options.status || (schemaReady ? (notificationEnabled ? 'ready' : 'disabled') : 'migration_required'),
   };
   return pushNotificationState;
 }
 
 function notificationStatusLabel(state = pushNotificationState) {
+  if (state?.status === 'migration_required' || state?.userSettingsReady === false) {
+    return notifText('Migratsiya kerak', 'Нужна миграция', 'Migration needed');
+  }
   if (state?.status === 'syncing') return notifText('Sinxronlanmoqda', 'Синхронизация', 'Syncing');
   if (state?.status === 'error') return notifText('Xatolik', 'Ошибка', 'Error');
   if (state?.status === 'waiting_user' || !UID) return notifText('User kutilmoqda', 'Ожидается user', 'Waiting for user');
-  if (state?.userSettingsReady === false) return notifText('Migratsiya kerak', 'Нужна миграция', 'Migration needed');
   if (state?.notificationEnabled === false) return notifText('O‘chiq', 'Выключено', 'Disabled');
   if (state?.notificationEnabled === true) return notifText('Yoqilgan', 'Включено', 'Enabled');
   return notifText('Tayyor emas', 'Не готово', 'Not ready');
@@ -518,7 +520,7 @@ function updateNotificationSettingsUI() {
   setText('notif-help-text', notificationHelpText(state));
 
   const busy = state?.status === 'syncing';
-  const canManage = !!UID && state?.userSettingsReady !== false;
+  const canManage = !!UID;
   const enableBtn = $('notif-enable-btn');
   if (enableBtn) {
     enableBtn.disabled = !canManage || busy || state.notificationEnabled === true;
@@ -713,6 +715,10 @@ async function refreshPushNotifications() {
 async function disablePushNotifications() {
   return saveNotificationPreference(false);
 }
+
+window.enablePushNotifications = enablePushNotifications;
+window.refreshPushNotifications = refreshPushNotifications;
+window.disablePushNotifications = disablePushNotifications;
 
 // ─── HELPERS ────────────────────────────────────────────
 const fmt = n => {
