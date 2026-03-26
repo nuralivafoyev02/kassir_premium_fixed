@@ -748,6 +748,10 @@
             <strong id="notif-device-value">—</strong>
           </div>
           <div class="notif-row">
+            <span data-i18n="notif_project_label">Supabase loyiha</span>
+            <strong id="notif-project-value">—</strong>
+          </div>
+          <div class="notif-row">
             <span data-i18n="notif_sync_label">Oxirgi sync</span>
             <strong id="notif-sync-value">—</strong>
           </div>

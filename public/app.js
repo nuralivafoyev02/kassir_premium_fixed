@@ -361,6 +361,38 @@ function hasNotificationSchema(record) {
   return NOTIFICATION_USER_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(record || {}, field));
 }
 
+function getSupabaseProjectRef() {
+  const rawUrl = String(window.__APP_CONFIG__?.SUPABASE_URL || '').trim();
+  const match = rawUrl.match(/^https?:\/\/([a-z0-9-]+)\.supabase\.co/i);
+  return match ? match[1] : '';
+}
+
+function notificationProjectLabel() {
+  const ref = getSupabaseProjectRef();
+  return ref || notifText('Aniqlanmadi', 'Не определён', 'Unknown');
+}
+
+function notificationMigrationHelp() {
+  const ref = getSupabaseProjectRef();
+  const projectHint = ref
+    ? notifText(
+      `Joriy loyiha: ${ref}.`,
+      `Текущий проект: ${ref}.`,
+      `Current project: ${ref}.`
+    )
+    : notifText(
+      'Joriy loyiha aniqlanmadi.',
+      'Текущий проект не определён.',
+      'Current project is unknown.'
+    );
+
+  return notifText(
+    `${projectHint} Notification bo‘limi uchun kerakli DB ustunlari shu projectda topilmadi. \`supabase.sql\` dagi notification migratsiyasini aynan shu projectga qo‘llang va deployni yangilang.`,
+    `${projectHint} Для блока уведомлений не найдены нужные колонки БД именно в этом проекте. Примените notification-миграцию из \`supabase.sql\` к этому проекту и обновите deploy.`,
+    `${projectHint} The notification DB columns were not found in this project. Apply the notification migration from \`supabase.sql\` to this exact project and redeploy.`
+  );
+}
+
 function syncNotificationUserState(record = null, options = {}) {
   const raw = record || {};
   const schemaReady = options.schemaReady !== false;
@@ -463,11 +495,7 @@ function notificationHelpText(state = pushNotificationState) {
   const snapshot = getSubscriptionSnapshotLocal();
 
   if (state?.userSettingsReady === false) {
-    return notifText(
-      'Notification bo‘limi uchun kerakli DB ustunlari hali yo‘q. Migratsiya qo‘llangach bu bo‘lim to‘liq ishlaydi.',
-      'Для блока уведомлений пока нет нужных колонок БД. После миграции раздел заработает полностью.',
-      'The notification section still needs its DB columns. After the migration it will work fully.'
-    );
+    return notificationMigrationHelp();
   }
 
   if (state?.lastError) {
@@ -514,6 +542,7 @@ function updateNotificationSettingsUI() {
   setText('notif-permission-value', notificationPermissionLabel(state));
   setText('notif-provider-value', notificationProviderLabel(state));
   setText('notif-device-value', notificationDeviceLabel(state));
+  setText('notif-project-value', notificationProjectLabel());
   setText('notif-sync-value', formatNotificationSyncTime(state.lastSyncAt || state.lastReminderAt || state.lastReportAt));
   setText('notif-reminders-value', notificationReminderLabel(state));
   setText('notif-premium-value', notificationPremiumLabel(state));
@@ -521,9 +550,10 @@ function updateNotificationSettingsUI() {
 
   const busy = state?.status === 'syncing';
   const canManage = !!UID;
+  const schemaReady = state?.userSettingsReady !== false;
   const enableBtn = $('notif-enable-btn');
   if (enableBtn) {
-    enableBtn.disabled = !canManage || busy || state.notificationEnabled === true;
+    enableBtn.disabled = !canManage || busy || !schemaReady || state.notificationEnabled === true;
   }
   const refreshBtn = $('notif-refresh-btn');
   if (refreshBtn) {
@@ -531,7 +561,7 @@ function updateNotificationSettingsUI() {
   }
   const disableBtn = $('notif-disable-btn');
   if (disableBtn) {
-    disableBtn.disabled = !UID || busy || (state.notificationEnabled === false && !state.tokenRegistered);
+    disableBtn.disabled = !UID || busy || !schemaReady || (state.notificationEnabled === false && !state.tokenRegistered);
   }
 }
 
@@ -593,7 +623,11 @@ async function refreshNotificationPreferences(options = {}) {
     };
     updateNotificationSettingsUI();
     if (options.showToast) {
-      showErr(notifText('Notification holati yangilandi ✅', 'Статус уведомлений обновлён ✅', 'Notification status refreshed ✅'));
+      if (pushNotificationState.userSettingsReady === false) {
+        showErr(notificationMigrationHelp());
+      } else {
+        showErr(notifText('Notification holati yangilandi ✅', 'Статус уведомлений обновлён ✅', 'Notification status refreshed ✅'));
+      }
     }
     return pushNotificationState;
   } catch (error) {
@@ -637,7 +671,7 @@ async function saveNotificationPreference(enabled) {
   }
 
   if (userNotificationColumnsSupported === false) {
-    showErr(notifText('Notification migratsiyasi hali qo‘llanmagan', 'Миграция уведомлений ещё не применена', 'Notification migration has not been applied yet'));
+    showErr(notificationMigrationHelp());
     return null;
   }
 
@@ -659,7 +693,7 @@ async function saveNotificationPreference(enabled) {
       userNotificationColumnsSupported = false;
       syncNotificationUserState({}, { schemaReady: false, status: 'error' });
       updateNotificationSettingsUI();
-      showErr(notifText('Notification migratsiyasi hali qo‘llanmagan', 'Миграция уведомлений ещё не применена', 'Notification migration has not been applied yet'));
+      showErr(notificationMigrationHelp());
       return null;
     }
     if (result.error) throw result.error;

@@ -62,6 +62,7 @@
   "notif_permission_label": "Статус",
   "notif_provider_label": "Провайдер",
   "notif_device_label": "Устройство",
+  "notif_project_label": "Проект Supabase",
   "notif_sync_label": "Последнее обновление",
   "notif_reminders_label": "Базовое напоминание",
   "notif_premium_label": "Premium-напоминания",
