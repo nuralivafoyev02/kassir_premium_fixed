@@ -142,6 +142,11 @@
       kind: 'premium_only',
       premiumBenefitKeys: ['advanced_reports', 'deep_analytics'],
     }),
+    premium_dashboard: Object.freeze({
+      key: 'premium_dashboard',
+      kind: 'premium_only',
+      premiumBenefitKeys: ['deep_analytics', 'advanced_reports', 'ai_insights'],
+    }),
     deep_analytics: Object.freeze({
       key: 'deep_analytics',
       kind: 'premium_only',

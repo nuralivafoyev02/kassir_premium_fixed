@@ -11,6 +11,8 @@
   let featureBooted = false;
   let debtRealtimeBound = false;
   let planRealtimeBound = false;
+  let debtDataReady = false;
+  let planDataReady = false;
   let debtFilterStatus = 'all';
   let debtFilterDirection = 'all';
   let debtSearchQuery = '';
@@ -193,6 +195,24 @@
   const duplicateKeyError = (error) => {
     const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
     return msg.includes('duplicate key') || msg.includes('unique constraint') || msg.includes('already exists');
+  };
+  const featureSnapshot = () => ({
+    debtReady: debtDataReady,
+    planReady: planDataReady,
+    debts: debtList.map((item) => ({ ...item })),
+    plans: planList.map((item) => ({ ...item })),
+  });
+  const publishFeatureSnapshot = () => {
+    window.__KASSA_FINANCE_FEATURES__ = {
+      getSnapshot: featureSnapshot,
+      getPlanStats: (plan) => getPlanStats(plan),
+    };
+  };
+  const refreshDashboardAnalytics = () => {
+    publishFeatureSnapshot();
+    if (typeof window.renderDashboardAnalytics === 'function') {
+      window.renderDashboardAnalytics();
+    }
   };
   const normalizePlanName = (row) => String(row?.category_name || row?.name || row?.category || '').trim();
   const normalizePlanMonthKey = (row) => String(row?.month_key || row?.month || '').trim();
@@ -523,6 +543,8 @@
   async function loadDebtsData() {
     if (!db || !UID) {
       debtList = (readJson(debtStoreKey(), []) || []).map(normalizeDebt);
+      debtDataReady = true;
+      refreshDashboardAnalytics();
       return;
     }
     const { data, error } = await db.from('debts').select('*').eq('user_id', UID).order('due_at', { ascending: true });
@@ -530,17 +552,23 @@
       if (relationMissing(error, 'debts')) {
         debtTableAvailable = false;
         debtList = (readJson(debtStoreKey(), []) || []).map(normalizeDebt);
+        debtDataReady = true;
+        refreshDashboardAnalytics();
         return;
       }
       throw error;
     }
     debtTableAvailable = true;
     debtList = (data || []).map(normalizeDebt);
+    debtDataReady = true;
+    refreshDashboardAnalytics();
   }
 
   async function loadPlanData() {
     if (!db || !UID) {
       planList = (readJson(planStoreKey(), []) || []).map(normalizePlan);
+      planDataReady = true;
+      refreshDashboardAnalytics();
       return;
     }
 
@@ -554,6 +582,8 @@
       if (relationMissing(error, 'category_limits')) {
         planTableAvailable = false;
         planList = (readJson(planStoreKey(), []) || []).map(normalizePlan);
+        planDataReady = true;
+        refreshDashboardAnalytics();
         return;
       }
       throw error;
@@ -567,6 +597,8 @@
         if (bTs !== aTs) return bTs - aTs;
         return Number(b.id || 0) - Number(a.id || 0);
       });
+    planDataReady = true;
+    refreshDashboardAnalytics();
   }
 
   function persistLocalDebts() { writeJson(debtStoreKey(), debtList); }
@@ -908,6 +940,7 @@
       persistLocalDebts();
       closeOv('ov-debt-form');
       renderDebts();
+      refreshDashboardAnalytics();
       return;
     }
 
@@ -932,6 +965,7 @@
     }
     closeOv('ov-debt-form');
     renderDebts();
+    refreshDashboardAnalytics();
     vib('light');
   };
 
@@ -953,6 +987,7 @@
         renderDebts();
         renderAll();
         renderHistory();
+        refreshDashboardAnalytics();
         return;
       }
 
@@ -965,6 +1000,7 @@
       renderDebts();
       renderAll();
       renderHistory();
+      refreshDashboardAnalytics();
     } catch (error) {
       console.warn('[markDebtPaid]', error);
       if (settlement?.created) {
@@ -998,6 +1034,7 @@
         renderDebts();
         renderAll();
         renderHistory();
+        refreshDashboardAnalytics();
         return;
       }
 
@@ -1010,6 +1047,7 @@
       renderDebts();
       renderAll();
       renderHistory();
+      refreshDashboardAnalytics();
     } catch (error) {
       debt.status = 'paid';
       debt.settlement_tx_id = prevSettlementId;
@@ -1032,6 +1070,7 @@
         renderDebts();
         renderAll();
         renderHistory();
+        refreshDashboardAnalytics();
         return;
       }
       const { error } = await db.from('debts').delete().eq('id', id).eq('user_id', UID);
@@ -1039,6 +1078,7 @@
       renderDebts();
       renderAll();
       renderHistory();
+      refreshDashboardAnalytics();
     } catch (error) {
       showErr(error.message || 'Debt delete failed');
     }
@@ -1217,6 +1257,7 @@
       persistLocalPlans();
       renderPlans();
       closeOv('ov-plan-form');
+      refreshDashboardAnalytics();
       return;
     }
 
@@ -1291,16 +1332,18 @@
     await refreshFeatureData('plan', true);
     renderPlans();
     closeOv('ov-plan-form');
+    refreshDashboardAnalytics();
     vib('light');
   };
 
   window.deletePlan = async function deletePlan(id) {
     if (!confirm(currentLang === 'ru' ? 'Удалить эту цель?' : currentLang === 'en' ? 'Delete this plan?' : "Bu rejani o'chirasizmi?")) return;
     planList = planList.filter(item => Number(item.id) !== Number(id));
-    if (!db || planTableAvailable === false) { persistLocalPlans(); renderPlans(); return; }
+    if (!db || planTableAvailable === false) { persistLocalPlans(); renderPlans(); refreshDashboardAnalytics(); return; }
     const { error } = await db.from('category_limits').delete().eq('id', id).eq('user_id', UID);
     if (error) return showErr(error.message || 'Plan delete failed');
     renderPlans();
+    refreshDashboardAnalytics();
   };
 
   function snapshotPlanSpend() {
@@ -1352,6 +1395,7 @@
           }
           if (eventType === 'DELETE') debtList = debtList.filter(item => Number(item.id) !== Number(oldRow.id));
           renderDebts();
+          refreshDashboardAnalytics();
         }).subscribe();
     }
     if (!planRealtimeBound && planTableAvailable !== false) {
@@ -1370,6 +1414,7 @@
           }
           if (eventType === 'DELETE') planList = planList.filter(item => Number(item.id) !== Number(oldRow.id));
           renderPlans();
+          refreshDashboardAnalytics();
         }).subscribe();
     }
   }
@@ -1468,4 +1513,6 @@
   } else {
     setTimeout(bootstrapFeatures, 0);
   }
+
+  publishFeatureSnapshot();
 })();

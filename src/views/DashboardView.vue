@@ -117,9 +117,8 @@
         <div class="panel dash-analytics-panel" id="dash-analytics-panel">
           <div class="panel-head-inline">
             <div>
-              <div class="panel-ttl" data-i18n="dashboard_analytics_title">Chuqur analiz</div>
-              <div class="dash-panel-sub" id="dash-analytics-subtitle" data-i18n="dashboard_analytics_sub">Hafta va oy
-                bo'yicha foydali solishtirishlar</div>
+              <div class="panel-ttl" data-i18n="dashboard_premium_title">Premium dashboard</div>
+              <div class="dash-panel-sub" id="dash-analytics-subtitle" data-i18n="dashboard_premium_sub">Pul holati, xavf va prognozlar bir joyda</div>
             </div>
             <button type="button" class="dash-panel-chip" id="dash-analytics-action" onclick="handleDashboardAnalyticsAction()">Premium</button>
           </div>

@@ -1565,6 +1565,12 @@ function getPaywallCopy(featureKey, gate) {
       body: tt('paywall_reports_body', 'Premium orqali PDF va Excel ko‘rinishidagi kengaytirilgan hisobotlarni yuklab olishingiz mumkin.'),
     };
   }
+  if (feature === 'premium_dashboard') {
+    return {
+      title: tt('dashboard_premium_locked_title', 'Premium dashboardni oching'),
+      body: tt('dashboard_premium_locked_body', 'Balans prognozi, xavfsiz xarajat, limit xavfi va moliyaviy salomatlik skori Premium foydalanuvchilarga ochiladi.'),
+    };
+  }
   if (feature === 'daily_morning_reminder' || feature === 'daily_evening_reminder') {
     return {
       title: tt('paywall_reminders_title', 'Kunlik eslatmalar Premium tarifida'),
@@ -1790,6 +1796,7 @@ function updateSubscriptionUI() {
   const currentStatusEl = $('upgrade-current-status');
   if (currentPlanEl) currentPlanEl.textContent = planText;
   if (currentStatusEl) currentStatusEl.textContent = statusText;
+  renderDashboardAnalytics();
 }
 
 function openUpgradePaywall(featureKey, options = {}) {
@@ -1828,7 +1835,7 @@ function handleUpgradeRequiredError(error, fallbackFeatureKey = null, source = '
 }
 
 function openDashboardAnalyticsPaywall() {
-  return openUpgradePaywall('deep_analytics', { source: 'dashboard_analytics' });
+  return openUpgradePaywall('premium_dashboard', { source: 'dashboard_analytics', relaxedWhenSchemaMissing: false });
 }
 
 function handleDashboardAnalyticsAction() {
@@ -2762,101 +2769,615 @@ function renderDashboardOverview(rows = []) {
   grid.innerHTML = cards.map(renderOverviewWidgetCard).join('');
 }
 
-function renderComparisonMetricRow(label, value, meta, metricKey) {
-  return `
-    <div class="dash-compare-row">
-      <div>
-        <div class="dash-compare-label">${escapeHtml(label)}</div>
-        <strong>${escapeHtml(formatDashboardAmount(value))}</strong>
-      </div>
-      <span class="dash-delta-badge ${escapeHtml(getDeltaTone(meta, metricKey))}">${escapeHtml(meta?.label || '0%')}</span>
-    </div>
-  `;
+function getFinanceFeatureSnapshot() {
+  try {
+    const snapshot = window.__KASSA_FINANCE_FEATURES__?.getSnapshot?.();
+    if (!snapshot || typeof snapshot !== 'object') {
+      return { planReady: false, debtReady: false, plans: [], debts: [] };
+    }
+    return {
+      planReady: snapshot.planReady === true,
+      debtReady: snapshot.debtReady === true,
+      plans: Array.isArray(snapshot.plans) ? snapshot.plans : [],
+      debts: Array.isArray(snapshot.debts) ? snapshot.debts : [],
+    };
+  } catch (error) {
+    console.warn('[dashboard] finance snapshot failed', error);
+    return { planReady: false, debtReady: false, plans: [], debts: [] };
+  }
 }
 
-function renderAnalyticsCardHead(eyebrow, title, compareLabel) {
-  return `
-    <div class="dash-analytics-card-head">
-      <div class="dash-analytics-head-copy">
-        <div class="dash-analytics-eyebrow">${escapeHtml(eyebrow)}</div>
-        <h3>${escapeHtml(title)}</h3>
-        <div class="dash-period-meta">
-          <span class="dash-period-chip" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12a9 9 0 1 0 3-6.7"></path>
-              <path d="M3 4v4h4"></path>
-            </svg>
-          </span>
-          <span class="dash-period-text">${escapeHtml(compareLabel)}</span>
+function getDashboardMonthContext(ms = Date.now()) {
+  const date = new Date(ms);
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const start = new Date(year, month, 1).getTime();
+  const end = new Date(year, month + 1, 0, 23, 59, 59, 999).getTime();
+  const prevStart = new Date(year, month - 1, 1).getTime();
+  const prevEnd = start - 1;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const elapsedDays = Math.max(1, date.getDate());
+  const remainingDays = Math.max(1, daysInMonth - date.getDate() + 1);
+  return { start, end, prevStart, prevEnd, daysInMonth, elapsedDays, remainingDays };
+}
+
+function formatDashboardPercent(value, { signed = false, decimals = 0 } = {}) {
+  if (!Number.isFinite(value)) return '—';
+  const amount = Math.abs(value);
+  const fixed = decimals > 0 ? amount.toFixed(decimals) : String(Math.round(amount));
+  const prefix = signed ? (value > 0 ? '+' : value < 0 ? '-' : '') : '';
+  return `${prefix}${fixed}%`;
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getDashboardBaseCategoryName(value = '') {
+  return String(value || '').replace(/\s*\(\$.*\)\s*$/u, '').trim();
+}
+
+function normalizeDashboardMatchText(value = '') {
+  return getDashboardBaseCategoryName(value)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[ʻ’`']/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getDashboardMonthKey(ms = Date.now()) {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getTotalBalance(rows = []) {
+  return summarizeDashboardRows(rows).balance;
+}
+
+function getBalanceBefore(rows = [], beforeMs = Date.now()) {
+  return getTotalBalance((rows || []).filter((row) => row.ms < beforeMs));
+}
+
+function groupRowsByDashboardCategory(rows = [], type = 'expense') {
+  const grouped = new Map();
+  (rows || []).forEach((row) => {
+    if (type !== 'all' && row.type !== type) return;
+    const label = getDashboardBaseCategoryName(row.category) || tt('dashboard_premium_uncategorized', 'Kategoriyasiz');
+    const key = normalizeDashboardMatchText(label) || label;
+    if (!grouped.has(key)) {
+      grouped.set(key, { key, name: label, amount: 0, rows: [] });
+    }
+    const bucket = grouped.get(key);
+    bucket.amount += Number(row.amount) || 0;
+    bucket.rows.push(row);
+  });
+  return Array.from(grouped.values()).sort((a, b) => b.amount - a.amount);
+}
+
+function getDashboardPlanStats(plan, monthExpenseRows = []) {
+  const budget = Number(plan?.amount) || 0;
+  const targetMonth = String(plan?.month_key || getDashboardMonthKey()).trim();
+  const spent = (monthExpenseRows || [])
+    .filter((row) => getDashboardMonthKey(row.ms) === targetMonth)
+    .filter((row) => normalizeDashboardMatchText(row.category) === normalizeDashboardMatchText(plan?.category_name))
+    .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+  const rawRemaining = budget - spent;
+  const remaining = Math.max(0, rawRemaining);
+  const percentRaw = budget > 0 ? (spent / budget) * 100 : 0;
+  const percent = budget > 0 ? clampNumber(percentRaw, 0, 999) : 0;
+  const exceeded = budget > 0 && spent > budget;
+  const alertBefore = Number(plan?.alert_before) || 0;
+  const near = budget > 0 ? (!exceeded && (remaining <= alertBefore || percent >= 85)) : false;
+  return {
+    budget,
+    spent,
+    rawRemaining,
+    remaining,
+    percent,
+    exceeded,
+    near,
+    overBy: Math.max(0, spent - budget),
+  };
+}
+
+function getDebtDueTimestamp(item) {
+  return item?.due_at ? toMs(item.due_at) : 0;
+}
+
+function formatDashboardDayLabel(ms) {
+  return new Intl.DateTimeFormat(localeTag(), { weekday: 'short' }).format(new Date(ms));
+}
+
+function getTransactionNoteHint(tx) {
+  const explicitNote = String(tx?.note || '').trim();
+  if (explicitNote) return explicitNote;
+  const category = String(tx?.category || '').trim();
+  if (category.includes(' · ')) return category.split(' · ').slice(1).join(' · ').trim();
+  return '';
+}
+
+function averageNumber(values = []) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function buildRecurringPayments(rows = []) {
+  const cutoff = Date.now() - (120 * DAY_MS);
+  const grouped = new Map();
+  rows
+    .filter((row) => row.type === 'expense' && row.ms >= cutoff)
+    .forEach((row) => {
+      const label = getDashboardBaseCategoryName(row.category);
+      const key = normalizeDashboardMatchText(label);
+      if (!key) return;
+      if (!grouped.has(key)) grouped.set(key, { name: label, rows: [] });
+      grouped.get(key).rows.push(row);
+    });
+
+  return Array.from(grouped.values())
+    .map((group) => {
+      const items = group.rows.slice().sort((a, b) => a.ms - b.ms);
+      const monthKeys = [...new Set(items.map((row) => getDashboardMonthKey(row.ms)))];
+      if (items.length < 2 || monthKeys.length < 2) return null;
+      const intervals = items.slice(1).map((item, index) => (item.ms - items[index].ms) / DAY_MS);
+      const monthlyLike = intervals.some((value) => value >= 24 && value <= 38) || monthKeys.length >= 3;
+      if (!monthlyLike) return null;
+      const amounts = items.map((item) => Number(item.amount) || 0).filter((item) => item > 0);
+      const avgAmount = averageNumber(amounts);
+      const dayNumbers = items.map((item) => new Date(item.ms).getDate());
+      const daySpread = dayNumbers.length ? Math.max(...dayNumbers) - Math.min(...dayNumbers) : 31;
+      const avgInterval = intervals.length ? averageNumber(intervals) : 30;
+      const nextDateMs = items[items.length - 1].ms + (avgInterval * DAY_MS);
+      const amountSpread = avgAmount > 0 && amounts.length ? (Math.max(...amounts) - Math.min(...amounts)) / avgAmount : 1;
+      const confidence = clampNumber(
+        (daySpread <= 5 ? 0.45 : 0.22)
+          + (amountSpread <= 0.25 ? 0.35 : 0.16)
+          + (monthKeys.length >= 3 ? 0.2 : 0.08),
+        0,
+        1
+      );
+      return {
+        name: group.name,
+        avgAmount,
+        lastDateMs: items[items.length - 1].ms,
+        nextDateMs,
+        confidence,
+        count: items.length,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      return b.avgAmount - a.avgAmount;
+    })
+    .slice(0, 5);
+}
+
+function buildAbnormalSpendingAlerts(rows = []) {
+  const now = Date.now();
+  const currentStart = getDayStartMs(now) - (6 * DAY_MS);
+  const previousEnd = currentStart - 1;
+  const previousStart = currentStart - (7 * DAY_MS);
+  const currentRows = getRowsInWindow(rows, currentStart, now, 'expense');
+  const previousRows = getRowsInWindow(rows, previousStart, previousEnd, 'expense');
+  const currentTotal = currentRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+  const previousTotal = previousRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+  const alerts = [];
+
+  if (currentTotal > 0 && previousTotal > 0) {
+    const change = ((currentTotal - previousTotal) / previousTotal) * 100;
+    if (change >= 25 && currentTotal - previousTotal >= 200000) {
+      alerts.push({
+        tone: 'danger',
+        title: tt('dashboard_premium_alert_total_title', 'Haftalik xarajat keskin oshdi'),
+        body: notifText(
+          `So‘nggi 7 kunda xarajat ${formatDashboardPercent(change, { signed: true })} ga oshdi.`,
+          `Расходы за последние 7 дней выросли на ${formatDashboardPercent(change, { signed: true })}.`,
+          `Your spending over the last 7 days is up ${formatDashboardPercent(change, { signed: true })}.`
+        ),
+      });
+    }
+  }
+
+  const currentCategories = groupRowsByDashboardCategory(currentRows, 'expense');
+  const previousMap = Object.fromEntries(groupRowsByDashboardCategory(previousRows, 'expense').map((item) => [item.key, item.amount]));
+  currentCategories.slice(0, 4).forEach((item) => {
+    const previousAmount = Number(previousMap[item.key] || 0);
+    if (item.amount >= 150000 && ((previousAmount > 0 && item.amount >= previousAmount * 1.6) || (previousAmount === 0 && item.amount >= 250000))) {
+      const changeText = previousAmount > 0
+        ? formatDashboardPercent(((item.amount - previousAmount) / previousAmount) * 100, { signed: true })
+        : tt('dashboard_widget_new', 'Yangi');
+      alerts.push({
+        tone: 'warn',
+        title: tt('dashboard_premium_alert_category_title', 'Kategoriya bo‘yicha sakrash'),
+        body: notifText(
+          `${item.name} bo‘yicha xarajat ${changeText} ga oshdi.`,
+          `Траты по категории ${item.name} выросли на ${changeText}.`,
+          `${item.name} spending increased by ${changeText}.`
+        ),
+      });
+    }
+  });
+
+  return alerts.slice(0, 3);
+}
+
+function calculateFinancialHealth(model) {
+  const savingsRate = Number.isFinite(model.savingsRate) ? model.savingsRate : null;
+  const savingsScore = savingsRate == null
+    ? 12
+    : clampNumber(((savingsRate + 10) / 30) * 30, 0, 30);
+
+  const activeLimits = model.limitStats.length;
+  const exceededLimits = model.limitStats.filter((item) => item.stats.exceeded).length;
+  const nearLimits = model.limitStats.filter((item) => item.stats.near).length;
+  const limitDisciplineScore = activeLimits
+    ? clampNumber((((activeLimits - exceededLimits) + (nearLimits * 0.5)) / activeLimits) * 25, 0, 25)
+    : 16;
+
+  const payablePressure = model.monthIncome > 0
+    ? model.payableDebts / model.monthIncome
+    : (model.payableDebts > 0 ? 1 : 0);
+  const debtScore = clampNumber((1 - Math.min(1, payablePressure)) * 20, 0, 20) - Math.min(8, model.overdueDebtCount * 4);
+
+  const currentWeek = model.currentWeekExpense;
+  const previousWeek = model.previousWeekExpense;
+  const volatility = previousWeek > 0 ? Math.abs(currentWeek - previousWeek) / previousWeek : (currentWeek > 0 ? 1 : 0);
+  const stabilityScore = clampNumber((1 - Math.min(1, volatility)) * 15, 0, 15) - Math.min(6, model.abnormalAlerts.length * 2);
+
+  const planCount = model.planProgressItems.length;
+  const onTrackCount = model.planProgressItems.filter((item) => !item.stats.exceeded && !item.stats.near).length;
+  const nearCount = model.planProgressItems.filter((item) => item.stats.near).length;
+  const planScore = planCount
+    ? clampNumber((((onTrackCount) + (nearCount * 0.5)) / planCount) * 10, 0, 10)
+    : 6;
+
+  const score = clampNumber(
+    Math.round(savingsScore + limitDisciplineScore + Math.max(0, debtScore) + Math.max(0, stabilityScore) + planScore),
+    0,
+    100
+  );
+
+  const breakdown = [
+    { label: tt('dashboard_premium_health_savings', 'Jamg‘arma'), value: `${Math.round(savingsScore)}/30` },
+    { label: tt('dashboard_premium_health_limits', 'Limit'), value: `${Math.round(limitDisciplineScore)}/25` },
+    { label: tt('dashboard_premium_health_debts', 'Qarz'), value: `${Math.round(Math.max(0, debtScore))}/20` },
+    { label: tt('dashboard_premium_health_stability', 'Barqarorlik'), value: `${Math.round(Math.max(0, stabilityScore))}/15` },
+    { label: tt('dashboard_premium_health_plans', 'Rejalar'), value: `${Math.round(planScore)}/10` },
+  ];
+
+  const weakest = breakdown.slice().sort((a, b) => {
+    const aScore = Number(String(a.value).split('/')[0]) || 0;
+    const bScore = Number(String(b.value).split('/')[0]) || 0;
+    return aScore - bScore;
+  })[0];
+
+  const summary = score >= 80
+    ? tt('dashboard_premium_health_summary_strong', 'Pul oqimi nazoratda, xavflar past.')
+    : score >= 60
+      ? tt('dashboard_premium_health_summary_ok', 'Umumiy holat yaxshi, lekin bir necha xavf signali bor.')
+      : tt('dashboard_premium_health_summary_risk', 'Asosiy ko‘rsatkichlarda bosim bor, reja va xarajatni qayta ko‘ring.');
+
+  return {
+    score,
+    breakdown,
+    summary,
+    weakest,
+  };
+}
+
+function buildPremiumDashboardModel() {
+  const finance = getFinanceFeatureSnapshot();
+  const now = Date.now();
+  const month = getDashboardMonthContext(now);
+  const monthRows = getRowsInWindow(txList, month.start, now);
+  const monthExpenseRows = monthRows.filter((row) => row.type === 'expense');
+  const monthSummary = summarizeDashboardRows(monthRows);
+  const previousMonthRows = getRowsInWindow(txList, month.prevStart, month.prevEnd);
+  const previousMonthSummary = summarizeDashboardRows(previousMonthRows);
+  const totalBalance = getTotalBalance(txList);
+  const monthStartBalance = getBalanceBefore(txList, month.start);
+  const todayStart = getDayStartMs(now);
+  const todayRows = getRowsInWindow(txList, todayStart, todayStart + DAY_MS - 1);
+  const todayNet = summarizeDashboardRows(todayRows).balance;
+  const balanceVsPrevMonth = getChangeMeta(totalBalance, monthStartBalance);
+  const forecastExpense = month.elapsedDays > 0 ? (monthSummary.expense / month.elapsedDays) * month.daysInMonth : monthSummary.expense;
+  const remainingForecastExpense = Math.max(0, forecastExpense - monthSummary.expense);
+  const expectedSavings = monthSummary.income - forecastExpense;
+  const forecastBalance = totalBalance - remainingForecastExpense;
+  const limitStats = finance.plans
+    .filter((plan) => plan?.is_active !== false)
+    .filter((plan) => String(plan?.month_key || getDashboardMonthKey()) === getDashboardMonthKey(now))
+    .map((plan) => ({ plan, stats: getDashboardPlanStats(plan, monthExpenseRows) }));
+  const sortedLimitStats = limitStats.slice().sort((a, b) => {
+    const riskA = a.stats.exceeded ? 3 : a.stats.near ? 2 : 1;
+    const riskB = b.stats.exceeded ? 3 : b.stats.near ? 2 : 1;
+    if (riskB !== riskA) return riskB - riskA;
+    if (b.stats.percent !== a.stats.percent) return b.stats.percent - a.stats.percent;
+    return b.stats.spent - a.stats.spent;
+  });
+  const topExpenseCategories = groupRowsByDashboardCategory(monthExpenseRows, 'expense');
+  const last7Days = Array.from({ length: 7 }, (_, index) => {
+    const dayMs = getDayStartMs(now) - ((6 - index) * DAY_MS);
+    const dayRows = getRowsInWindow(txList, dayMs, dayMs + DAY_MS - 1);
+    const summary = summarizeDashboardRows(dayRows);
+    return {
+      label: formatDashboardDayLabel(dayMs),
+      income: summary.income,
+      expense: summary.expense,
+      ms: dayMs,
+    };
+  });
+  const maxTrendValue = Math.max(1, ...last7Days.flatMap((item) => [item.income, item.expense]));
+  const savingsRate = monthSummary.income > 0 ? ((monthSummary.income - monthSummary.expense) / monthSummary.income) * 100 : null;
+  const largestTransactions = monthRows
+    .slice()
+    .sort((a, b) => {
+      if (b.amount !== a.amount) return b.amount - a.amount;
+      return b.ms - a.ms;
+    })
+    .slice(0, 5);
+  const openDebts = finance.debts.filter((item) => item?.status !== 'paid');
+  const receivableDebts = openDebts
+    .filter((item) => item.direction === 'receivable')
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const payableDebts = openDebts
+    .filter((item) => item.direction === 'payable')
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const dueSoonDebt = openDebts
+    .filter((item) => getDebtDueTimestamp(item) > 0)
+    .sort((a, b) => getDebtDueTimestamp(a) - getDebtDueTimestamp(b))[0] || null;
+  const overdueDebtCount = openDebts.filter((item) => {
+    const ts = getDebtDueTimestamp(item);
+    return ts > 0 && ts < now;
+  }).length;
+  const payableDueThisMonth = openDebts
+    .filter((item) => item.direction === 'payable')
+    .filter((item) => {
+      const ts = getDebtDueTimestamp(item);
+      return ts > 0 && ts <= month.end;
+    })
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const remainingLimitBudget = sortedLimitStats.reduce((sum, item) => sum + item.stats.remaining, 0);
+  const safeByPlan = sortedLimitStats.length ? (remainingLimitBudget / month.remainingDays) : Number.POSITIVE_INFINITY;
+  const safeByCash = Math.max(0, totalBalance - remainingForecastExpense - payableDueThisMonth) / month.remainingDays;
+  const safeToSpend = Math.max(0, Math.floor(Number.isFinite(safeByPlan) ? Math.min(safeByPlan, safeByCash) : safeByCash));
+  const abnormalAlerts = buildAbnormalSpendingAlerts(txList);
+  const planProgressItems = sortedLimitStats.slice(0, 5);
+  const recurringPayments = buildRecurringPayments(txList);
+  const currentWeekExpense = getRowsInWindow(txList, getDayStartMs(now) - (6 * DAY_MS), now, 'expense')
+    .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+  const previousWeekExpense = getRowsInWindow(txList, getDayStartMs(now) - (13 * DAY_MS), getDayStartMs(now) - (7 * DAY_MS) - 1, 'expense')
+    .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+
+  const model = {
+    financeReady: finance.planReady && finance.debtReady,
+    planReady: finance.planReady,
+    debtReady: finance.debtReady,
+    totalBalance,
+    todayNet,
+    monthStartDelta: totalBalance - monthStartBalance,
+    balanceVsPrevMonth,
+    monthIncome: monthSummary.income,
+    monthExpense: monthSummary.expense,
+    monthNet: monthSummary.balance,
+    previousMonthNet: previousMonthSummary.balance,
+    forecastExpense,
+    forecastBalance,
+    expectedSavings,
+    remainingForecastExpense,
+    limitStats: sortedLimitStats,
+    topExpenseCategories,
+    last7Days,
+    maxTrendValue,
+    safeToSpend,
+    payableDueThisMonth,
+    receivableDebts,
+    payableDebts,
+    dueSoonDebt,
+    overdueDebtCount,
+    savingsRate,
+    largestTransactions,
+    abnormalAlerts,
+    planProgressItems,
+    recurringPayments,
+    monthRemainingDays: month.remainingDays,
+    currentWeekExpense,
+    previousWeekExpense,
+  };
+  model.health = calculateFinancialHealth(model);
+  return model;
+}
+
+function renderPremiumDashboardCard(card) {
+  const classes = ['dash-analytics-card', 'premium-dashboard-card'];
+  if (card.size) classes.push(card.size);
+  if (card.tone) classes.push(`tone-${card.tone}`);
+  if (card.loading) classes.push('is-loading');
+  if (card.empty) classes.push('is-empty');
+
+  let body = '';
+  if (card.loading) {
+    body = `
+      <div class="premium-widget-loading">
+        <div class="dash-analytics-preview-line w-40"></div>
+        <div class="dash-analytics-preview-line w-90"></div>
+        <div class="dash-analytics-preview-line w-72"></div>
+        <div class="dash-analytics-preview-line w-58"></div>
+      </div>
+    `;
+  } else if (card.empty) {
+    body = `
+      <div class="dash-widget-empty premium-widget-empty">
+        <strong>${escapeHtml(card.emptyTitle || tt('dashboard_widget_empty_title', 'Hali ma‘lumot yetarli emas'))}</strong>
+        <span>${escapeHtml(card.emptyBody || tt('dashboard_widget_empty_body', 'Xarajatlar paydo bo‘lgach kategoriya bo‘yicha ulush va o‘sish shu yerda ko‘rinadi.'))}</span>
+      </div>
+    `;
+  } else {
+    body = `
+      ${Array.isArray(card.metrics) && card.metrics.length ? `
+        <div class="premium-widget-metrics">
+          ${card.metrics.map((item) => `
+            <div class="premium-widget-metric ${escapeHtml(item.tone || 'neutral')}">
+              <span>${escapeHtml(item.label)}</span>
+              <strong>${escapeHtml(item.value)}</strong>
+            </div>
+          `).join('')}
         </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderComparisonCard(model) {
-  return `
-    <article class="dash-analytics-card">
-      ${renderAnalyticsCardHead(tt('dashboard_widget_compare_label', 'Solishtirish'), model.title, model.compareLabel)}
-      <div class="dash-compare-list">
-        ${renderComparisonMetricRow(tt('income', 'Kirim'), model.currentSummary.income, model.deltas.income, 'income')}
-        ${renderComparisonMetricRow(tt('expense', 'Chiqim'), model.currentSummary.expense, model.deltas.expense, 'expense')}
-        ${renderComparisonMetricRow(tt('dashboard_widget_balance', 'Balans'), model.currentSummary.balance, model.deltas.balance, 'balance')}
-      </div>
-    </article>
-  `;
-}
-
-function renderCategoryCard(model) {
-  if (!model.items.length) {
-    return `
-      <article class="dash-analytics-card">
-        ${renderAnalyticsCardHead(tt('expense', 'Chiqim'), model.title, model.compareLabel)}
-        <div class="dash-widget-empty">
-          <strong>${escapeHtml(tt('dashboard_widget_empty_title', 'Hali ma‘lumot yetarli emas'))}</strong>
-          <span>${escapeHtml(tt('dashboard_widget_empty_body', 'Xarajatlar paydo bo‘lgach kategoriya bo‘yicha ulush va o‘sish shu yerda ko‘rinadi.'))}</span>
-        </div>
-      </article>
+      ` : ''}
+      ${card.body || ''}
     `;
   }
 
   return `
-    <article class="dash-analytics-card">
-      ${renderAnalyticsCardHead(tt('expense', 'Chiqim'), model.title, model.compareLabel)}
-      <div class="dash-category-list">
-        ${model.items.map((item) => `
-          <div class="dash-category-row">
-            <div class="dash-category-row-head">
-              <strong>${escapeHtml(item.name)}</strong>
-              <span>${Math.round(item.share)}%</span>
-            </div>
-            <div class="dash-category-bar"><span style="width:${Math.max(10, Math.round(item.share))}%"></span></div>
-            <div class="dash-category-row-meta">
-              <span>${escapeHtml(formatDashboardAmount(item.amount))}</span>
-              <span class="dash-delta-badge ${escapeHtml(getDeltaTone(item.delta, 'expense'))}">${escapeHtml(item.delta?.label || '0%')}</span>
-            </div>
-          </div>
-        `).join('')}
+    <article class="${classes.join(' ')}">
+      <div class="premium-widget-head">
+        <div class="premium-widget-head-copy">
+          <div class="premium-widget-title">${escapeHtml(card.title)}</div>
+          <div class="premium-widget-main">${escapeHtml(card.main)}</div>
+          <div class="premium-widget-subtext">${escapeHtml(card.sub)}</div>
+        </div>
+        <span class="premium-widget-icon" aria-hidden="true">${svgIcon(card.icon || 'star', 'premium-widget-icon-svg')}</span>
       </div>
+      ${body}
     </article>
   `;
 }
 
-function renderLockedAnalyticsCards() {
+function renderDashboardTrendChart(days = [], maxValue = 1) {
   return `
-    <article class="dash-analytics-card is-locked wide">
+    <div class="premium-trend-chart">
+      ${days.map((item) => `
+        <div class="premium-trend-col">
+          <div class="premium-trend-bars">
+            <span class="income" style="height:${Math.max(6, Math.round((item.income / maxValue) * 100))}%"></span>
+            <span class="expense" style="height:${Math.max(6, Math.round((item.expense / maxValue) * 100))}%"></span>
+          </div>
+          <div class="premium-trend-label">${escapeHtml(item.label)}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderProgressRows(items = [], { exceededLabel, nearLabel, normalLabel } = {}) {
+  return `
+    <div class="premium-progress-list">
+      ${items.map((item) => {
+        const status = item.stats.exceeded ? 'exceeded' : item.stats.near ? 'near' : 'normal';
+        const statusText = item.stats.exceeded ? exceededLabel : item.stats.near ? nearLabel : normalLabel;
+        const width = clampNumber(item.stats.percent, 4, 100);
+        return `
+          <div class="premium-progress-row ${status}">
+            <div class="premium-progress-head">
+              <strong>${escapeHtml(item.plan.category_name || tt('dashboard_premium_uncategorized', 'Kategoriyasiz'))}</strong>
+              <span>${escapeHtml(formatDashboardAmount(item.stats.spent))} / ${escapeHtml(formatDashboardAmount(item.stats.budget))}</span>
+            </div>
+            <div class="premium-progress-bar"><span style="width:${width}%"></span></div>
+            <div class="premium-progress-meta">
+              <span>${escapeHtml(statusText)}</span>
+              <span>${escapeHtml(formatDashboardPercent(item.stats.percent))}</span>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderTopCategoryRows(items = []) {
+  const total = items.reduce((sum, item) => sum + item.amount, 0);
+  return `
+    <div class="premium-progress-list">
+      ${items.map((item) => {
+        const share = total > 0 ? (item.amount / total) * 100 : 0;
+        return `
+          <div class="premium-progress-row normal">
+            <div class="premium-progress-head">
+              <strong>${escapeHtml(item.name)}</strong>
+              <span>${escapeHtml(formatDashboardAmount(item.amount))}</span>
+            </div>
+            <div class="premium-progress-bar"><span style="width:${Math.max(8, Math.round(share))}%"></span></div>
+            <div class="premium-progress-meta">
+              <span>${escapeHtml(tt('dashboard_premium_share', 'Ulush'))}</span>
+              <span>${escapeHtml(formatDashboardPercent(share))}</span>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderTransactionRows(items = []) {
+  return `
+    <div class="premium-list">
+      ${items.map((item) => {
+        const note = getTransactionNoteHint(item);
+        return `
+          <div class="premium-list-row ${item.type === 'income' ? 'income' : 'expense'}">
+            <div class="premium-list-copy">
+              <strong>${escapeHtml(getDashboardBaseCategoryName(item.category) || tt('dashboard_premium_uncategorized', 'Kategoriyasiz'))}</strong>
+              <span>${escapeHtml(new Intl.DateTimeFormat(localeTag(), { day: '2-digit', month: 'short' }).format(new Date(item.ms)))}${note ? ` · ${escapeHtml(note)}` : ''}</span>
+            </div>
+            <div class="premium-list-value">${escapeHtml(formatDashboardAmount(item.amount, { signed: item.type === 'income' }))}</div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderAlertRows(items = []) {
+  return `
+    <div class="premium-alert-list">
+      ${items.map((item) => `
+        <div class="premium-alert-card ${escapeHtml(item.tone || 'warn')}">
+          <strong>${escapeHtml(item.title)}</strong>
+          <span>${escapeHtml(item.body)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderRecurringRows(items = []) {
+  return `
+    <div class="premium-list">
+      ${items.map((item) => `
+        <div class="premium-list-row recurring">
+          <div class="premium-list-copy">
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(tt('dashboard_premium_next_expected', 'Keyingi kutilmoqda'))}: ${escapeHtml(new Intl.DateTimeFormat(localeTag(), { day: '2-digit', month: 'short' }).format(new Date(item.nextDateMs)))}</span>
+          </div>
+          <div class="premium-list-value">${escapeHtml(formatDashboardAmount(item.avgAmount))}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderLockedAnalyticsCards(snapshot) {
+  const syncing = snapshot?.schemaReady === false;
+  return `
+    <article class="dash-analytics-card premium-dashboard-card is-locked wide">
       <span class="subscription-status-badge premium">${escapeHtml(tt('dashboard_widget_premium_badge', 'Premium'))}</span>
-      <h3>${escapeHtml(tt('dashboard_widget_unlock_title', 'Haftalik va oylik analizni oching'))}</h3>
-      <p>${escapeHtml(tt('dashboard_widget_unlock_body', 'Premium bilan kirim va chiqimdagi foiz o‘zgarishlari, kategoriya ulushi va xarajatlar dinamikasi aniq ko‘rinadi.'))}</p>
+      <h3>${escapeHtml(tt('dashboard_premium_locked_title', 'Premium dashboardni oching'))}</h3>
+      <p>${escapeHtml(syncing
+        ? tt('subscription_syncing_hint', 'Tarif ma\'lumotlari bazadan yangilangach avtomatik ko‘rinadi.')
+        : tt('dashboard_premium_locked_body', 'Balans prognozi, xavfsiz xarajat, limit xavfi va moliyaviy salomatlik skori Premium foydalanuvchilarga ochiladi.'))}</p>
       <button type="button" class="bpri pricing-action-btn" onclick="openDashboardAnalyticsPaywall()">${escapeHtml(tt('subscription_upgrade_action', 'Premium ga o‘tish'))}</button>
     </article>
-    <article class="dash-analytics-card is-preview" aria-hidden="true">
+    <article class="dash-analytics-card premium-dashboard-card is-preview" aria-hidden="true">
       <div class="dash-analytics-preview-line w-40"></div>
       <div class="dash-analytics-preview-line w-90"></div>
       <div class="dash-analytics-preview-line w-72"></div>
       <div class="dash-analytics-preview-line w-58"></div>
     </article>
-    <article class="dash-analytics-card is-preview" aria-hidden="true">
+    <article class="dash-analytics-card premium-dashboard-card is-preview" aria-hidden="true">
       <div class="dash-analytics-preview-line w-55"></div>
       <div class="dash-analytics-preview-line w-82"></div>
       <div class="dash-analytics-preview-line w-64"></div>
@@ -2872,9 +3393,9 @@ function renderDashboardAnalytics() {
   const subtitle = $('dash-analytics-subtitle');
   if (!panel || !grid) return;
 
-  const gate = getFeatureGateResult('deep_analytics');
+  const gate = getFeatureGateResult('premium_dashboard', { relaxedWhenSchemaMissing: false });
   const snapshot = gate?.snapshot || getSubscriptionSnapshotLocal();
-  const isPremium = !!snapshot?.isPremium;
+  const isPremium = !!(gate?.allowed && snapshot?.isPremium);
 
   if (action) {
     action.textContent = isPremium
@@ -2885,32 +3406,245 @@ function renderDashboardAnalytics() {
 
   if (subtitle) {
     subtitle.textContent = isPremium
-      ? tt('dashboard_analytics_sub', 'Hafta va oy bo‘yicha foydali solishtirishlar')
-      : tt('dashboard_analytics_locked_sub', 'Premium bilan hafta, oy va kategoriya bo‘yicha chuqur analiz ochiladi');
+      ? tt('dashboard_premium_sub', 'Pul holati, xavf va prognozlar bir joyda')
+      : tt('dashboard_premium_locked_sub', 'Premium bilan balans prognozi, xavf radari va foydali tavsiyalar ochiladi');
   }
 
-  if (!gate.allowed && !gate.degraded) {
-    grid.innerHTML = renderLockedAnalyticsCards();
+  if (!isPremium) {
+    grid.innerHTML = renderLockedAnalyticsCards(snapshot);
     return;
   }
 
-  const weekModel = getPeriodComparison('week');
-  const monthModel = getPeriodComparison('month');
-  const weekCategories = getCategoryMomentum('week');
-  const monthCategories = getCategoryMomentum('month');
+  const model = buildPremiumDashboardModel();
+  const topCategories = model.topExpenseCategories.slice(0, 5);
+  const riskLimits = model.limitStats.slice(0, 5);
+  const largestTx = model.largestTransactions.slice(0, 5);
+  const recurring = model.recurringPayments.slice(0, 4);
+  const dueDebtLabel = model.dueSoonDebt
+    ? `${model.dueSoonDebt.person_name} · ${new Intl.DateTimeFormat(localeTag(), { day: '2-digit', month: 'short' }).format(new Date(model.dueSoonDebt.due_at || model.dueSoonDebt.created_at))}`
+    : tt('dashboard_premium_none', 'Yo‘q');
 
-  grid.innerHTML = [
-    renderComparisonCard(weekModel),
-    renderComparisonCard(monthModel),
-    renderCategoryCard(weekCategories),
-    renderCategoryCard(monthCategories),
-  ].join('');
+  const cards = [
+    {
+      size: 'hero',
+      tone: 'balance',
+      icon: 'banknote',
+      title: tt('dashboard_premium_balance_title', 'Total balance'),
+      main: formatDashboardAmount(model.totalBalance, { signed: model.totalBalance < 0 }),
+      sub: notifText(
+        `Bugun ${formatDashboardAmount(model.todayNet, { signed: true })} · Oy boshidan ${formatDashboardAmount(model.monthStartDelta, { signed: true })}`,
+        `Сегодня ${formatDashboardAmount(model.todayNet, { signed: true })} · С начала месяца ${formatDashboardAmount(model.monthStartDelta, { signed: true })}`,
+        `Today ${formatDashboardAmount(model.todayNet, { signed: true })} · Since month start ${formatDashboardAmount(model.monthStartDelta, { signed: true })}`
+      ),
+      metrics: [
+        { label: tt('dashboard_premium_balance_today', 'Bugun'), value: formatDashboardAmount(model.todayNet, { signed: true }), tone: model.todayNet >= 0 ? 'good' : 'bad' },
+        { label: tt('dashboard_premium_balance_month', 'Oy boshidan'), value: formatDashboardAmount(model.monthStartDelta, { signed: true }), tone: model.monthStartDelta >= 0 ? 'good' : 'bad' },
+        { label: tt('dashboard_premium_balance_compare', 'O‘tgan oyga nisbatan'), value: model.balanceVsPrevMonth?.label || '0%', tone: getDeltaTone(model.balanceVsPrevMonth, 'balance') },
+      ],
+    },
+    {
+      icon: 'briefcase',
+      title: tt('dashboard_premium_cashflow_title', 'Monthly cashflow'),
+      main: formatDashboardAmount(model.monthNet, { signed: true }),
+      sub: tt('dashboard_premium_cashflow_sub', 'Shu oy bo‘yicha sof natija'),
+      metrics: [
+        { label: tt('income', 'Kirim'), value: formatDashboardAmount(model.monthIncome), tone: 'good' },
+        { label: tt('expense', 'Chiqim'), value: formatDashboardAmount(model.monthExpense), tone: 'bad' },
+        { label: tt('dashboard_widget_balance', 'Balans'), value: formatDashboardAmount(model.monthNet, { signed: true }), tone: model.monthNet >= 0 ? 'good' : 'bad' },
+      ],
+    },
+    {
+      icon: 'tool',
+      title: tt('dashboard_premium_forecast_title', 'Month-end forecast'),
+      main: formatDashboardAmount(model.forecastBalance, { signed: model.forecastBalance < 0 }),
+      sub: notifText(
+        `Shu temp davom etsa, oy oxirida kutilgan balans ${formatDashboardAmount(model.forecastBalance)} bo‘ladi.`,
+        `Если темп сохранится, ожидаемый баланс к концу месяца составит ${formatDashboardAmount(model.forecastBalance)}.`,
+        `If this pace continues, your expected month-end balance is ${formatDashboardAmount(model.forecastBalance)}.`
+      ),
+      metrics: [
+        { label: tt('dashboard_premium_forecast_expense', 'Prognoz xarajat'), value: formatDashboardAmount(model.forecastExpense), tone: 'bad' },
+        { label: tt('dashboard_premium_forecast_savings', 'Kutilgan jamg‘arma'), value: formatDashboardAmount(model.expectedSavings, { signed: true }), tone: model.expectedSavings >= 0 ? 'good' : 'bad' },
+      ],
+    },
+    {
+      icon: 'gift',
+      title: tt('dashboard_premium_safe_title', 'Safe to spend today'),
+      main: formatDashboardAmount(model.safeToSpend),
+      sub: tt('dashboard_premium_safe_sub', 'Bugungi limit va prognozga xavfsiz summa'),
+      metrics: [
+        { label: tt('dashboard_premium_days_left', 'Qolgan kun'), value: String(model.monthRemainingDays), tone: 'neutral' },
+        { label: tt('dashboard_premium_due_payables', 'Qarz bosimi'), value: formatDashboardAmount(model.payableDueThisMonth), tone: model.payableDueThisMonth > 0 ? 'warn' : 'good' },
+      ],
+    },
+    {
+      icon: 'star',
+      title: tt('dashboard_premium_savings_title', 'Savings rate'),
+      main: Number.isFinite(model.savingsRate) ? formatDashboardPercent(model.savingsRate, { decimals: 1 }) : '—',
+      sub: model.monthIncome > 0
+        ? tt('dashboard_premium_savings_sub', '(income - expense) / income')
+        : tt('dashboard_premium_no_income_sub', 'Shu oy daromad yozilmagan'),
+      metrics: [
+        { label: tt('income', 'Kirim'), value: formatDashboardAmount(model.monthIncome), tone: 'good' },
+        { label: tt('expense', 'Chiqim'), value: formatDashboardAmount(model.monthExpense), tone: 'bad' },
+      ],
+      empty: model.monthIncome === 0,
+      emptyTitle: tt('dashboard_premium_no_income_title', 'Daromad yozuvi topilmadi'),
+      emptyBody: tt('dashboard_premium_no_income_body', 'Jamg‘arma foizi daromad tushgach aniq ko‘rinadi.'),
+    },
+    {
+      icon: 'zap',
+      title: tt('dashboard_premium_health_title', 'Financial health score'),
+      main: `${model.health.score}/100`,
+      sub: model.health.summary,
+      metrics: model.health.breakdown,
+    },
+    {
+      size: 'wide',
+      icon: 'shopping-bag',
+      title: tt('dashboard_premium_limits_title', 'Category limit status'),
+      main: riskLimits.length
+        ? notifText(
+          `${riskLimits.filter((item) => item.stats.exceeded || item.stats.near).length} ta xavfli limit`,
+          `${riskLimits.filter((item) => item.stats.exceeded || item.stats.near).length} рискованных лимита`,
+          `${riskLimits.filter((item) => item.stats.exceeded || item.stats.near).length} risky limits`
+        )
+        : tt('dashboard_premium_none', 'Yo‘q'),
+      sub: tt('dashboard_premium_limits_sub', 'Faol limitlar ichida eng xavflilari tepada'),
+      loading: !model.planReady,
+      empty: model.planReady && !riskLimits.length,
+      emptyTitle: tt('dashboard_premium_limits_empty_title', 'Faol limit topilmadi'),
+      emptyBody: tt('dashboard_premium_limits_empty_body', 'Kategoriya limitlari qo‘shilgach xavf darajasi shu yerda ko‘rinadi.'),
+      body: renderProgressRows(riskLimits, {
+        exceededLabel: tt('dashboard_premium_limit_exceeded', 'Oshib ketgan'),
+        nearLabel: tt('dashboard_premium_limit_near', 'Chegaraga yaqin'),
+        normalLabel: tt('dashboard_premium_limit_normal', 'Nazoratda'),
+      }),
+    },
+    {
+      size: 'wide',
+      icon: 'shopping-cart',
+      title: tt('dashboard_premium_top_categories_title', 'Top expense categories'),
+      main: topCategories[0] ? topCategories[0].name : tt('dashboard_premium_none', 'Yo‘q'),
+      sub: tt('dashboard_premium_top_categories_sub', 'Shu oy eng ko‘p pul ketayotgan yo‘nalishlar'),
+      empty: !topCategories.length,
+      emptyTitle: tt('dashboard_premium_top_categories_empty_title', 'Xarajat kategoriyalari yo‘q'),
+      emptyBody: tt('dashboard_premium_top_categories_empty_body', 'Shu oy xarajatlar paydo bo‘lgach eng katta kategoriyalar chiqadi.'),
+      body: renderTopCategoryRows(topCategories),
+    },
+    {
+      icon: 'credit-card',
+      title: tt('dashboard_premium_debts_title', 'Debts overview'),
+      main: formatDashboardAmount(model.payableDebts),
+      sub: tt('dashboard_premium_debts_sub', 'Beriladigan qarzlar bo‘yicha hozirgi bosim'),
+      loading: !model.debtReady,
+      metrics: [
+        { label: tt('debts_receivable', 'Olinadigan'), value: formatDashboardAmount(model.receivableDebts), tone: 'good' },
+        { label: tt('debts_payable', 'Beriladigan'), value: formatDashboardAmount(model.payableDebts), tone: 'bad' },
+        { label: tt('dashboard_premium_next_due', 'Eng yaqin muddat'), value: dueDebtLabel, tone: model.overdueDebtCount > 0 ? 'warn' : 'neutral' },
+      ],
+      empty: model.debtReady && model.receivableDebts === 0 && model.payableDebts === 0,
+      emptyTitle: tt('dashboard_premium_debts_empty_title', 'Qarzlar yo‘q'),
+      emptyBody: tt('dashboard_premium_debts_empty_body', 'Qarz yozuvlari qo‘shilganda eng yaqin muddat va xavf shu yerda ko‘rinadi.'),
+      body: model.debtReady && (model.receivableDebts > 0 || model.payableDebts > 0)
+        ? renderAlertRows(model.overdueDebtCount > 0 ? [{
+          tone: 'danger',
+          title: tt('dashboard_premium_debts_overdue_title', 'Kechikkan qarz bor'),
+          body: notifText(
+            `${model.overdueDebtCount} ta qarz muddati o‘tgan.`,
+            `${model.overdueDebtCount} долга просрочено.`,
+            `${model.overdueDebtCount} debts are overdue.`
+          ),
+        }] : [{
+          tone: 'good',
+          title: tt('dashboard_premium_debts_ok_title', 'Qarzlar nazoratda'),
+          body: tt('dashboard_premium_debts_ok_body', 'Eng yaqin muddat kuzatilmoqda, kechikkan qarz yo‘q.'),
+        }])
+        : '',
+    },
+    {
+      size: 'wide',
+      icon: 'monitor',
+      title: tt('dashboard_premium_trend_title', 'Last 7 days trend'),
+      main: formatDashboardAmount(model.currentWeekExpense),
+      sub: tt('dashboard_premium_trend_sub', 'Kunlik kirim va chiqim ritmi'),
+      empty: model.last7Days.every((item) => item.income === 0 && item.expense === 0),
+      emptyTitle: tt('dashboard_premium_trend_empty_title', '7 kunlik trend uchun ma‘lumot yo‘q'),
+      emptyBody: tt('dashboard_premium_trend_empty_body', 'So‘nggi 7 kun tranzaksiyalari paydo bo‘lgach grafik chiziladi.'),
+      body: `
+        ${renderDashboardTrendChart(model.last7Days, model.maxTrendValue)}
+        <div class="premium-chart-legend">
+          <span><i class="income"></i>${escapeHtml(tt('income', 'Kirim'))}</span>
+          <span><i class="expense"></i>${escapeHtml(tt('expense', 'Chiqim'))}</span>
+        </div>
+      `,
+    },
+    {
+      size: 'wide',
+      icon: 'banknote',
+      title: tt('dashboard_premium_transactions_title', 'Largest transactions'),
+      main: largestTx[0] ? formatDashboardAmount(largestTx[0].amount, { signed: largestTx[0].type === 'income' }) : '—',
+      sub: tt('dashboard_premium_transactions_sub', 'Shu oy eng katta operatsiyalar'),
+      empty: !largestTx.length,
+      emptyTitle: tt('dashboard_premium_transactions_empty_title', 'Yirik tranzaksiyalar yo‘q'),
+      emptyBody: tt('dashboard_premium_transactions_empty_body', 'Tranzaksiyalar qo‘shilgach eng katta kirim va chiqimlar shu yerda ko‘rinadi.'),
+      body: renderTransactionRows(largestTx),
+    },
+    {
+      size: 'wide',
+      icon: 'zap',
+      title: tt('dashboard_premium_alerts_title', 'Abnormal spending alert'),
+      main: String(model.abnormalAlerts.length),
+      sub: tt('dashboard_premium_alerts_sub', 'Qoidaga asoslangan noodatiy xarajat signallari'),
+      empty: !model.abnormalAlerts.length,
+      emptyTitle: tt('dashboard_premium_alerts_empty_title', 'Keskin spike topilmadi'),
+      emptyBody: tt('dashboard_premium_alerts_empty_body', 'Xarajatlar odatdagi oraliqda. Noodatiy o‘sish bo‘lsa shu yerda ogohlantiramiz.'),
+      body: renderAlertRows(model.abnormalAlerts),
+    },
+    {
+      size: 'wide',
+      icon: 'star',
+      title: tt('dashboard_premium_plans_title', 'Plan / goal progress'),
+      main: model.planProgressItems.length
+        ? notifText(
+          `${model.planProgressItems.filter((item) => !item.stats.exceeded).length}/${model.planProgressItems.length} nazoratda`,
+          `${model.planProgressItems.filter((item) => !item.stats.exceeded).length}/${model.planProgressItems.length} в норме`,
+          `${model.planProgressItems.filter((item) => !item.stats.exceeded).length}/${model.planProgressItems.length} on track`
+        )
+        : tt('dashboard_premium_none', 'Yo‘q'),
+      sub: tt('dashboard_premium_plans_sub', 'Yaqin tugayotgan va xavfdagi rejalarga e‘tibor bering'),
+      loading: !model.planReady,
+      empty: model.planReady && !model.planProgressItems.length,
+      emptyTitle: tt('dashboard_premium_plans_empty_title', 'Rejalar topilmadi'),
+      emptyBody: tt('dashboard_premium_plans_empty_body', 'Maqsad va limit qo‘shilgach progress shu yerda chiqadi.'),
+      body: renderProgressRows(model.planProgressItems, {
+        exceededLabel: tt('dashboard_premium_limit_exceeded', 'Oshib ketgan'),
+        nearLabel: tt('dashboard_premium_goal_at_risk', 'Xavf ostida'),
+        normalLabel: tt('dashboard_premium_goal_near_complete', 'Yakuniga yaqin'),
+      }),
+    },
+    {
+      size: 'wide',
+      icon: 'wifi',
+      title: tt('dashboard_premium_recurring_title', 'Recurring payments'),
+      main: recurring.length ? formatDashboardAmount(recurring.reduce((sum, item) => sum + item.avgAmount, 0)) : '—',
+      sub: tt('dashboard_premium_recurring_sub', 'Takrorlanayotgan oylik xarajatlar heuristikasi'),
+      empty: !recurring.length,
+      emptyTitle: tt('dashboard_premium_recurring_empty_title', 'Takrorlanuvchi to‘lov topilmadi'),
+      emptyBody: tt('dashboard_premium_recurring_empty_body', 'Bir necha oy davomida bir xil xarajat qaytalansa shu yerda chiqadi.'),
+      body: renderRecurringRows(recurring),
+    },
+  ];
+
+  grid.innerHTML = cards.map(renderPremiumDashboardCard).join('');
 }
 
 function renderDashboardWidgets(rows = []) {
   renderDashboardOverview(rows);
   renderDashboardAnalytics();
 }
+
+window.renderDashboardAnalytics = renderDashboardAnalytics;
 
 function updateBalSize(txt) {
   const el = $('total-bal');
