@@ -227,12 +227,18 @@ let pushNotificationState = {
   lastError: null,
   embeddedTelegram: !!tg,
   appKind: tg ? 'mini_app' : 'web_app',
+  userSettingsReady: null,
+  notificationEnabled: null,
+  lastReminderAt: null,
+  lastReportAt: null,
 };
 const subscriptionHelpers = window.KassaSubscription || {};
 const SUBSCRIPTION_USER_FIELDS = Array.isArray(subscriptionHelpers.SUBSCRIPTION_FIELDS)
   ? subscriptionHelpers.SUBSCRIPTION_FIELDS.slice()
   : ['plan_code', 'subscription_status', 'subscription_start_at', 'subscription_end_at', 'trial_end_at', 'canceled_at', 'grace_until', 'created_at', 'updated_at'];
+const NOTIFICATION_USER_FIELDS = ['daily_reminder_enabled', 'last_daily_reminder_at', 'last_daily_report_at'];
 let userSubscriptionColumnsSupported = null;
+let userNotificationColumnsSupported = null;
 let currentPaywallFeatureKey = null;
 let currentPaywallSource = 'settings';
 let subscriptionState = {
@@ -351,62 +357,59 @@ function getFeatureGateResult(featureKey, context = {}) {
   };
 }
 
+function hasNotificationSchema(record) {
+  return NOTIFICATION_USER_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(record || {}, field));
+}
+
+function syncNotificationUserState(record = null, options = {}) {
+  const raw = record || {};
+  const schemaReady = options.schemaReady !== false;
+  const notificationEnabled = schemaReady ? raw.daily_reminder_enabled !== false : null;
+  pushNotificationState = {
+    ...pushNotificationState,
+    userSettingsReady: schemaReady,
+    notificationEnabled,
+    lastReminderAt: schemaReady ? raw.last_daily_reminder_at || null : null,
+    lastReportAt: schemaReady ? raw.last_daily_report_at || null : null,
+    status: options.status || (schemaReady ? (notificationEnabled ? 'ready' : 'disabled') : pushNotificationState.status),
+  };
+  return pushNotificationState;
+}
+
 function notificationStatusLabel(state = pushNotificationState) {
-  switch (state?.status) {
-    case 'ready':
-      return notifText('Tayyor', 'Готово', 'Ready');
-    case 'syncing':
-      return notifText('Sinxronlanmoqda', 'Синхронизация', 'Syncing');
-    case 'waiting_user':
-      return notifText('User kutilmoqda', 'Ожидается user', 'Waiting for user');
-    case 'permission_required':
-      return notifText('Ruxsat kerak', 'Нужно разрешение', 'Permission required');
-    case 'permission_denied':
-      return notifText('Ruxsat bloklangan', 'Разрешение заблокировано', 'Permission blocked');
-    case 'token_missing':
-      return notifText('Token topilmadi', 'Токен не получен', 'Token missing');
-    case 'disabled':
-      return notifText('O‘chiq', 'Выключено', 'Disabled');
-    case 'unsupported':
-      return notifText('Qo‘llanmaydi', 'Не поддерживается', 'Unsupported');
-    case 'error':
-      return notifText('Xatolik', 'Ошибка', 'Error');
-    default:
-      return state?.supported
-        ? notifText('Tayyor emas', 'Не готово', 'Not ready')
-        : notifText('Legacy fallback', 'Legacy fallback', 'Legacy fallback');
-  }
+  if (state?.status === 'syncing') return notifText('Sinxronlanmoqda', 'Синхронизация', 'Syncing');
+  if (state?.status === 'error') return notifText('Xatolik', 'Ошибка', 'Error');
+  if (state?.status === 'waiting_user' || !UID) return notifText('User kutilmoqda', 'Ожидается user', 'Waiting for user');
+  if (state?.userSettingsReady === false) return notifText('Migratsiya kerak', 'Нужна миграция', 'Migration needed');
+  if (state?.notificationEnabled === false) return notifText('O‘chiq', 'Выключено', 'Disabled');
+  if (state?.notificationEnabled === true) return notifText('Yoqilgan', 'Включено', 'Enabled');
+  return notifText('Tayyor emas', 'Не готово', 'Not ready');
 }
 
 function notificationBadgeState(state = pushNotificationState) {
-  if (state?.status === 'ready' && state?.tokenRegistered) return 'ready';
-  if (state?.status === 'error' || state?.status === 'permission_denied' || state?.status === 'unsupported') return 'error';
+  if (state?.status === 'error') return 'error';
+  if (state?.notificationEnabled === true) return 'ready';
   return 'warn';
 }
 
 function notificationSupportLabel(state = pushNotificationState) {
-  if (state?.supported) return notifText('Mavjud', 'Доступно', 'Available');
-  if (state?.supportReason === 'legacy_only' || !state?.publicEnabled) {
-    return notifText('Faqat Telegram', 'Только Telegram', 'Telegram only');
+  if (state?.userSettingsReady === false) {
+    return notifText('DB migratsiya kutilmoqda', 'Ожидается миграция БД', 'DB migration pending');
   }
-  if (state?.supportReason === 'push_disabled') {
-    return notifText('Web push o‘chiq', 'Web push выключен', 'Web push disabled');
-  }
-  if (state?.supportReason === 'insecure_context') {
-    return notifText('HTTPS kerak', 'Нужен HTTPS', 'HTTPS required');
-  }
-  return notifText('Mavjud emas', 'Недоступно', 'Unavailable');
+  return notifText('Telegram Worker', 'Telegram Worker', 'Telegram Worker');
 }
 
-function notificationPermissionLabel(permission = pushNotificationState.permission) {
-  if (permission === 'granted') return notifText('Berilgan', 'Разрешено', 'Granted');
-  if (permission === 'denied') return notifText('Rad etilgan', 'Запрещено', 'Denied');
-  if (permission === 'unsupported') return notifText('Yo‘q', 'Нет', 'Unsupported');
-  return notifText('So‘ralmagan', 'Не запрошено', 'Not requested');
+function notificationPermissionLabel(state = pushNotificationState) {
+  if (state?.userSettingsReady === false) {
+    return notifText('Sozlama topilmadi', 'Настройка не найдена', 'Setting missing');
+  }
+  return state?.notificationEnabled === false
+    ? notifText('O‘chirilgan', 'Отключено', 'Disabled')
+    : notifText('Yoqilgan', 'Включено', 'Enabled');
 }
 
-function notificationProviderLabel(state = pushNotificationState) {
-  return state?.provider === 'telegram' ? 'Telegram Worker' : 'Telegram Worker';
+function notificationProviderLabel() {
+  return 'Telegram Worker';
 }
 
 function notificationDeviceLabel(state = pushNotificationState) {
@@ -415,12 +418,31 @@ function notificationDeviceLabel(state = pushNotificationState) {
     : notifText('Web App', 'Web App', 'Web App');
   const tokenState = state?.tokenRegistered
     ? notifText(
-        `Eski push token · ${state.tokenPreview || 'saqlangan'}`,
-        `Старый push-токен · ${state.tokenPreview || 'сохранён'}`,
-        `Old push token · ${state.tokenPreview || 'stored'}`
-      )
+      `Eski push token · ${state.tokenPreview || 'saqlangan'}`,
+      `Старый push-токен · ${state.tokenPreview || 'сохранён'}`,
+      `Old push token · ${state.tokenPreview || 'stored'}`
+    )
     : notifText('Telegram orqali ishlaydi', 'Работает через Telegram', 'Handled via Telegram');
   return `${shell} · ${tokenState}`;
+}
+
+function notificationReminderLabel(state = pushNotificationState) {
+  if (state?.userSettingsReady === false) {
+    return notifText('Ustun topilmadi', 'Колонка не найдена', 'Column missing');
+  }
+  return state?.notificationEnabled === false
+    ? notifText('Basic reminder o‘chiq', 'Базовые напоминания выключены', 'Basic reminders are off')
+    : notifText('Basic reminder yoqilgan', 'Базовые напоминания включены', 'Basic reminders are on');
+}
+
+function notificationPremiumLabel() {
+  const snapshot = getSubscriptionSnapshotLocal();
+  if (snapshot?.schemaReady === false) {
+    return notifText('Tarif sinxronlanmoqda', 'Тариф синхронизируется', 'Plan is syncing');
+  }
+  return snapshot?.isPremium
+    ? notifText('Ertalabgi va kechki reminder ochiq', 'Утренние и вечерние напоминания доступны', 'Morning and evening reminders are available')
+    : notifText('Faqat basic reminder', 'Только базовое напоминание', 'Basic reminder only');
 }
 
 function formatNotificationSyncTime(value) {
@@ -436,35 +458,13 @@ function formatNotificationSyncTime(value) {
 }
 
 function notificationHelpText(state = pushNotificationState) {
-  if (state?.supportReason === 'legacy_only' || !state?.publicEnabled) {
-    return notifText(
-      'Bu build Telegram Worker notification bilan ishlaydi, shuning uchun brauzer push yoqilmaydi.',
-      'Эта сборка работает через Telegram Worker notifications, поэтому браузерный push не включается.',
-      'This build uses Telegram Worker notifications, so browser push is not enabled.'
-    );
-  }
+  const snapshot = getSubscriptionSnapshotLocal();
 
-  if (!state?.supported) {
+  if (state?.userSettingsReady === false) {
     return notifText(
-      'Qurilma yoki brauzer service worker / push API’ni to‘liq qo‘llamayapti. Bu holatda system legacy Worker notification bilan ishlashda davom etadi.',
-      'Устройство или браузер не поддерживает service worker / push API полностью. В этом случае система продолжит работать через legacy Worker notifications.',
-      'This device or browser does not fully support service workers / the Push API. In that case the system continues with legacy Worker notifications.'
-    );
-  }
-
-  if (state?.permission === 'default') {
-    return notifText(
-      'Brauzer push o‘chiq, shuning uchun permission oynasi ko‘rsatilmaydi.',
-      'Браузерный push выключен, поэтому окно разрешения не показывается.',
-      'Browser push is disabled, so the permission prompt is not shown.'
-    );
-  }
-
-  if (state?.permission === 'denied') {
-    return notifText(
-      'Brauzer push ruxsatini bloklagan. Uni browser settings ichidan yoqib, keyin qayta “Yangilash” qiling.',
-      'Браузер заблокировал push-разрешение. Включите его в настройках браузера, затем нажмите “Обновить”.',
-      'The browser blocked push permission. Re-enable it in browser settings, then tap “Refresh”.'
+      'Notification bo‘limi uchun kerakli DB ustunlari hali yo‘q. Migratsiya qo‘llangach bu bo‘lim to‘liq ishlaydi.',
+      'Для блока уведомлений пока нет нужных колонок БД. После миграции раздел заработает полностью.',
+      'The notification section still needs its DB columns. After the migration it will work fully.'
     );
   }
 
@@ -472,10 +472,26 @@ function notificationHelpText(state = pushNotificationState) {
     return state.lastError;
   }
 
+  if (state?.notificationEnabled === false) {
+    return notifText(
+      'Telegram eslatmalari o‘chiq. “Yoqish” tugmasi basic reminderni qayta yoqadi va premium bo‘lsa kunlik xabarlarni ham faollashtiradi.',
+      'Telegram-напоминания выключены. Кнопка “Включить” вернёт базовое напоминание и при Premium снова активирует ежедневные сообщения.',
+      'Telegram reminders are off. “Enable” restores the basic reminder and re-enables daily messages if the user has Premium.'
+    );
+  }
+
+  if (snapshot?.isPremium) {
+    return notifText(
+      'Telegram eslatmalari faol. Premium sabab ertalabgi va kechki xabarlar ham ishlaydi.',
+      'Telegram-напоминания активны. Благодаря Premium утренние и вечерние сообщения тоже включены.',
+      'Telegram reminders are active. Premium also unlocks morning and evening messages.'
+    );
+  }
+
   return notifText(
-    'Notificationlar Telegram Worker orqali yuboriladi. Agar eski brauzer push token saqlanib qolgan bo‘lsa, uni shu sahifadan tozalash mumkin.',
-    'Уведомления отправляются через Telegram Worker. Если остался старый браузерный push-токен, его можно очистить на этой странице.',
-    'Notifications are sent through the Telegram Worker. If an old browser push token remains, you can clear it from this page.'
+    'Telegram eslatmalari faol. Hozir basic reminder ishlaydi, ertalabgi va kechki xabarlar esa Premium tarifida ochiladi.',
+    'Telegram-напоминания активны. Сейчас работает базовое напоминание, а утренние и вечерние сообщения доступны в Premium.',
+    'Telegram reminders are active. The basic reminder is on, while morning and evening messages are unlocked on Premium.'
   );
 }
 
@@ -486,29 +502,34 @@ function updateNotificationSettingsUI() {
     badge.textContent = notificationStatusLabel(state);
     badge.dataset.state = notificationBadgeState(state);
   }
+
   const setText = (id, value) => {
     const el = $(id);
     if (el) el.textContent = value;
   };
 
   setText('notif-support-value', notificationSupportLabel(state));
-  setText('notif-permission-value', notificationPermissionLabel(state.permission));
+  setText('notif-permission-value', notificationPermissionLabel(state));
   setText('notif-provider-value', notificationProviderLabel(state));
   setText('notif-device-value', notificationDeviceLabel(state));
-  setText('notif-sync-value', formatNotificationSyncTime(state.lastSyncAt));
+  setText('notif-sync-value', formatNotificationSyncTime(state.lastSyncAt || state.lastReminderAt || state.lastReportAt));
+  setText('notif-reminders-value', notificationReminderLabel(state));
+  setText('notif-premium-value', notificationPremiumLabel(state));
   setText('notif-help-text', notificationHelpText(state));
 
+  const busy = state?.status === 'syncing';
+  const canManage = !!UID && state?.userSettingsReady !== false;
   const enableBtn = $('notif-enable-btn');
   if (enableBtn) {
-    enableBtn.disabled = !UID || !state.publicEnabled || !state.supported || state.permission === 'denied';
+    enableBtn.disabled = !canManage || busy || state.notificationEnabled === true;
   }
   const refreshBtn = $('notif-refresh-btn');
   if (refreshBtn) {
-    refreshBtn.disabled = !UID || !state.publicEnabled || !state.supported || state.permission !== 'granted';
+    refreshBtn.disabled = !UID || busy;
   }
   const disableBtn = $('notif-disable-btn');
   if (disableBtn) {
-    disableBtn.disabled = !state.tokenRegistered;
+    disableBtn.disabled = !UID || busy || (state.notificationEnabled === false && !state.tokenRegistered);
   }
 }
 
@@ -532,7 +553,7 @@ async function configurePushNotifications() {
       userId: UID,
       appConfig: window.__APP_CONFIG__ || {},
     });
-    if (state) pushNotificationState = { ...pushNotificationState, ...state };
+    if (state) pushNotificationState = { ...pushNotificationState, ...state, lastError: null };
   } catch (error) {
     console.warn('[push-configure]', error);
     pushNotificationState = {
@@ -545,66 +566,152 @@ async function configurePushNotifications() {
   return pushNotificationState;
 }
 
-async function syncPushNotifications(options = {}) {
-  const manager = window.__KASSA_PUSH__;
-  if (!manager?.sync) {
-    showErr(notifText('Push manager tayyor emas', 'Push manager не готов', 'Push manager is not ready'));
+async function refreshNotificationPreferences(options = {}) {
+  if (!UID) {
+    pushNotificationState = { ...pushNotificationState, status: 'waiting_user' };
+    updateNotificationSettingsUI();
     return null;
   }
 
+  pushNotificationState = {
+    ...pushNotificationState,
+    status: 'syncing',
+    lastError: null,
+  };
+  updateNotificationSettingsUI();
+
   try {
-    const state = await manager.sync(options);
-    if (state) pushNotificationState = { ...pushNotificationState, ...state };
+    const { data, error } = await selectUserRow(NOTIFICATION_USER_FIELDS);
+    if (error) throw error;
+    syncNotificationUserState(data || {}, { schemaReady: hasNotificationSchema(data) && userNotificationColumnsSupported !== false });
+    pushNotificationState = {
+      ...pushNotificationState,
+      lastError: null,
+      lastSyncAt: new Date().toISOString(),
+    };
     updateNotificationSettingsUI();
-
-    if (options.requestPermission && state?.permission === 'granted' && state?.tokenRegistered) {
-      showErr(notifText('Push bildirishnomalar yoqildi ✅', 'Push-уведомления включены ✅', 'Push notifications enabled ✅'));
-    } else if (options.requestPermission && state?.permission === 'denied') {
-      showErr(notifText('Brauzer push ruxsatini rad etdi', 'Браузер отклонил push-разрешение', 'The browser denied push permission'));
-    } else if (options.force && state?.tokenRegistered) {
-      showErr(notifText('Push token yangilandi ✅', 'Push-токен обновлён ✅', 'Push token refreshed ✅'));
+    if (options.showToast) {
+      showErr(notifText('Notification holati yangilandi ✅', 'Статус уведомлений обновлён ✅', 'Notification status refreshed ✅'));
     }
-
-    return state;
+    return pushNotificationState;
   } catch (error) {
-    console.warn('[push-sync]', error);
+    console.warn('[notif-refresh]', error);
     pushNotificationState = {
       ...pushNotificationState,
       status: 'error',
       lastError: error?.message || String(error),
     };
     updateNotificationSettingsUI();
-    showErr(notifText('Push sync xatosi', 'Ошибка push sync', 'Push sync error') + ': ' + (error?.message || error));
+    if (options.showToast) {
+      showErr(notifText('Notification holatini yangilab bo‘lmadi', 'Не удалось обновить статус уведомлений', 'Failed to refresh notification status') + ': ' + (error?.message || error));
+    }
+    return null;
+  }
+}
+
+async function syncLegacyPushState(options = {}) {
+  const manager = window.__KASSA_PUSH__;
+  if (!manager?.sync || !pushNotificationState.publicEnabled || !pushNotificationState.supported) {
+    return pushNotificationState;
+  }
+
+  try {
+    const state = await manager.sync(options);
+    if (state) pushNotificationState = { ...pushNotificationState, ...state };
+  } catch (error) {
+    console.warn('[legacy-push-sync]', error);
+    pushNotificationState = {
+      ...pushNotificationState,
+      lastError: error?.message || String(error),
+    };
+  }
+  return pushNotificationState;
+}
+
+async function saveNotificationPreference(enabled) {
+  if (!UID) {
+    showErr(notifText('Foydalanuvchi topilmadi', 'Пользователь не найден', 'User not found'));
+    return null;
+  }
+
+  if (userNotificationColumnsSupported === false) {
+    showErr(notifText('Notification migratsiyasi hali qo‘llanmagan', 'Миграция уведомлений ещё не применена', 'Notification migration has not been applied yet'));
+    return null;
+  }
+
+  pushNotificationState = {
+    ...pushNotificationState,
+    status: 'syncing',
+    lastError: null,
+  };
+  updateNotificationSettingsUI();
+
+  try {
+    const result = await db.from('users')
+      .update({ daily_reminder_enabled: !!enabled })
+      .eq('user_id', UID)
+      .select(`user_id, ${NOTIFICATION_USER_FIELDS.join(', ')}`)
+      .maybeSingle();
+
+    if (result.error && NOTIFICATION_USER_FIELDS.some((field) => userFieldMissing(result.error, field))) {
+      userNotificationColumnsSupported = false;
+      syncNotificationUserState({}, { schemaReady: false, status: 'error' });
+      updateNotificationSettingsUI();
+      showErr(notifText('Notification migratsiyasi hali qo‘llanmagan', 'Миграция уведомлений ещё не применена', 'Notification migration has not been applied yet'));
+      return null;
+    }
+    if (result.error) throw result.error;
+
+    if (enabled) {
+      await syncLegacyPushState({ requestPermission: true, force: true });
+    } else if (pushNotificationState.tokenRegistered && window.__KASSA_PUSH__?.disable) {
+      try {
+        const state = await window.__KASSA_PUSH__.disable('telegram_notifications_disabled');
+        if (state) pushNotificationState = { ...pushNotificationState, ...state };
+      } catch (error) {
+        console.warn('[notif-disable-legacy]', error);
+      }
+    }
+
+    syncNotificationUserState(result.data || { daily_reminder_enabled: !!enabled }, { schemaReady: true });
+    pushNotificationState = {
+      ...pushNotificationState,
+      lastError: null,
+      lastSyncAt: new Date().toISOString(),
+    };
+    updateNotificationSettingsUI();
+
+    showErr(
+      enabled
+        ? notifText('Telegram eslatmalari yoqildi ✅', 'Telegram-напоминания включены ✅', 'Telegram reminders enabled ✅')
+        : notifText('Telegram eslatmalari o‘chirildi', 'Telegram-напоминания отключены', 'Telegram reminders disabled')
+    );
+
+    return pushNotificationState;
+  } catch (error) {
+    console.warn('[notif-save]', error);
+    pushNotificationState = {
+      ...pushNotificationState,
+      status: 'error',
+      lastError: error?.message || String(error),
+    };
+    updateNotificationSettingsUI();
+    showErr(notifText('Notification sozlamasini saqlab bo‘lmadi', 'Не удалось сохранить настройки уведомлений', 'Failed to save notification settings') + ': ' + (error?.message || error));
     return null;
   }
 }
 
 async function enablePushNotifications() {
-  return syncPushNotifications({ requestPermission: true, force: true });
+  return saveNotificationPreference(true);
 }
 
 async function refreshPushNotifications() {
-  return syncPushNotifications({ force: true });
+  await configurePushNotifications();
+  return refreshNotificationPreferences({ showToast: true });
 }
 
 async function disablePushNotifications() {
-  const manager = window.__KASSA_PUSH__;
-  if (!manager?.disable) {
-    showErr(notifText('Push manager tayyor emas', 'Push manager не готов', 'Push manager is not ready'));
-    return null;
-  }
-
-  try {
-    const state = await manager.disable('manual_disable');
-    if (state) pushNotificationState = { ...pushNotificationState, ...state };
-    updateNotificationSettingsUI();
-    showErr(notifText('Push bildirishnomalar o‘chirildi', 'Push-уведомления отключены', 'Push notifications disabled'));
-    return state;
-  } catch (error) {
-    console.warn('[push-disable]', error);
-    showErr(notifText('Push o‘chirishda xato', 'Ошибка отключения push', 'Failed to disable push') + ': ' + (error?.message || error));
-    return null;
-  }
+  return saveNotificationPreference(false);
 }
 
 // ─── HELPERS ────────────────────────────────────────────
@@ -1351,9 +1458,11 @@ function userFieldMissing(error, field) {
 async function selectUserRow(extraFields = []) {
   const requestedExtraFields = Array.from(new Set(extraFields));
   const subscriptionFields = requestedExtraFields.filter((field) => SUBSCRIPTION_USER_FIELDS.includes(field));
-  const plainFields = requestedExtraFields.filter((field) => !SUBSCRIPTION_USER_FIELDS.includes(field));
+  const notificationFields = requestedExtraFields.filter((field) => NOTIFICATION_USER_FIELDS.includes(field));
+  const plainFields = requestedExtraFields.filter((field) => !SUBSCRIPTION_USER_FIELDS.includes(field) && !NOTIFICATION_USER_FIELDS.includes(field));
   let allowAvatar = userAvatarColumnSupported !== false;
   let allowSubscription = userSubscriptionColumnsSupported !== false && subscriptionFields.length > 0;
+  let allowNotification = userNotificationColumnsSupported !== false && notificationFields.length > 0;
   let result = null;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1364,12 +1473,14 @@ async function selectUserRow(extraFields = []) {
       'phone_number',
       ...plainFields,
       ...(allowSubscription ? subscriptionFields : []),
+      ...(allowNotification ? notificationFields : []),
     ])).join(', ');
 
     result = await db.from('users').select(fields).eq('user_id', UID).maybeSingle();
     if (!result.error) {
       if (allowAvatar) userAvatarColumnSupported = true;
       if (allowSubscription && subscriptionFields.length) userSubscriptionColumnsSupported = true;
+      if (allowNotification && notificationFields.length) userNotificationColumnsSupported = true;
       break;
     }
 
@@ -1382,6 +1493,12 @@ async function selectUserRow(extraFields = []) {
     if (allowSubscription && subscriptionFields.some((field) => userFieldMissing(result.error, field))) {
       allowSubscription = false;
       userSubscriptionColumnsSupported = false;
+      continue;
+    }
+
+    if (allowNotification && notificationFields.some((field) => userFieldMissing(result.error, field))) {
+      allowNotification = false;
+      userNotificationColumnsSupported = false;
       continue;
     }
 
@@ -1638,7 +1755,7 @@ async function ensureUser() {
 }
 
 async function loadData() {
-  const { data: u, error: ue } = await selectUserRow(['exchange_rate', ...SUBSCRIPTION_USER_FIELDS]);
+  const { data: u, error: ue } = await selectUserRow(['exchange_rate', ...SUBSCRIPTION_USER_FIELDS, ...NOTIFICATION_USER_FIELDS]);
   if (ue) throw ue;
 
   if (u?.exchange_rate) {
@@ -1646,6 +1763,7 @@ async function loadData() {
     store.set('rate', rate);
   }
   syncSubscriptionState(u || {}, { schemaReady: hasSubscriptionSchema(u) && userSubscriptionColumnsSupported !== false });
+  syncNotificationUserState(u || {}, { schemaReady: hasNotificationSchema(u) && userNotificationColumnsSupported !== false });
   if (u) {
     profileState.fullName = normalizeName(u.full_name) || profileState.fullName;
     profileState.phone = u.phone_number || profileState.phone || '';
@@ -3272,7 +3390,9 @@ function openStgSub(id) {
   }
   if (id === 'stg-sub-notifications') {
     updateNotificationSettingsUI();
-    configurePushNotifications().catch(() => { });
+    configurePushNotifications()
+      .then(() => refreshNotificationPreferences())
+      .catch(() => { });
   }
   if (id === 'stg-sub-subscription') {
     updateSubscriptionUI();
