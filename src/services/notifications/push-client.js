@@ -46,13 +46,6 @@ function getDeviceId() {
   return next
 }
 
-function previewToken(token) {
-  const raw = String(token || "").trim()
-  if (!raw) return ""
-  if (raw.length <= 18) return raw
-  return `${raw.slice(0, 10)}...${raw.slice(-6)}`
-}
-
 function currentPermission() {
   if (typeof window === "undefined" || !("Notification" in window)) {
     return "unsupported"
@@ -74,7 +67,6 @@ const pushState = {
   status: "idle",
   permission: currentPermission(),
   tokenRegistered: Boolean(storedToken),
-  tokenPreview: previewToken(storedToken),
   lastSyncAt: readStorage(STORAGE_KEYS.lastSyncAt) || null,
   lastError: null,
 }
@@ -226,7 +218,6 @@ export async function disablePushNotifications(reason = "manual_disable") {
     supportReason: currentSupportReason(config),
     permission: currentPermission(),
     tokenRegistered: false,
-    tokenPreview: "",
     lastSyncAt: nowIso,
     lastError: null,
   })

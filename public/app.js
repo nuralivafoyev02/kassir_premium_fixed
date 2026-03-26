@@ -222,7 +222,6 @@ let pushNotificationState = {
   provider: 'telegram',
   publicEnabled: false,
   tokenRegistered: false,
-  tokenPreview: '',
   lastSyncAt: null,
   lastError: null,
   embeddedTelegram: !!tg,
@@ -361,35 +360,19 @@ function hasNotificationSchema(record) {
   return NOTIFICATION_USER_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(record || {}, field));
 }
 
-function getSupabaseProjectRef() {
-  const rawUrl = String(window.__APP_CONFIG__?.SUPABASE_URL || '').trim();
-  const match = rawUrl.match(/^https?:\/\/([a-z0-9-]+)\.supabase\.co/i);
-  return match ? match[1] : '';
-}
-
-function notificationProjectLabel() {
-  const ref = getSupabaseProjectRef();
-  return ref || notifText('Aniqlanmadi', 'Не определён', 'Unknown');
-}
-
-function notificationMigrationHelp() {
-  const ref = getSupabaseProjectRef();
-  const projectHint = ref
-    ? notifText(
-      `Joriy loyiha: ${ref}.`,
-      `Текущий проект: ${ref}.`,
-      `Current project: ${ref}.`
-    )
-    : notifText(
-      'Joriy loyiha aniqlanmadi.',
-      'Текущий проект не определён.',
-      'Current project is unknown.'
-    );
-
+function notificationSetupHelp() {
   return notifText(
-    `${projectHint} Notification bo‘limi uchun kerakli DB ustunlari shu projectda topilmadi. \`supabase.sql\` dagi notification migratsiyasini aynan shu projectga qo‘llang va deployni yangilang.`,
-    `${projectHint} Для блока уведомлений не найдены нужные колонки БД именно в этом проекте. Примените notification-миграцию из \`supabase.sql\` к этому проекту и обновите deploy.`,
-    `${projectHint} The notification DB columns were not found in this project. Apply the notification migration from \`supabase.sql\` to this exact project and redeploy.`
+    'Bildirishnomalar hozircha sozlanmoqda. Bir ozdan keyin qayta urinib ko‘ring yoki administratorga murojaat qiling.',
+    'Уведомления пока настраиваются. Попробуйте чуть позже или обратитесь к администратору.',
+    'Notifications are still being set up. Please try again shortly or contact the administrator.'
+  );
+}
+
+function notificationErrorHelp() {
+  return notifText(
+    'Bildirishnomalarni yangilab bo‘lmadi. Iltimos, keyinroq qayta urinib ko‘ring.',
+    'Не удалось обновить уведомления. Попробуйте позже.',
+    'Could not refresh notifications. Please try again later.'
   );
 }
 
@@ -410,7 +393,7 @@ function syncNotificationUserState(record = null, options = {}) {
 
 function notificationStatusLabel(state = pushNotificationState) {
   if (state?.status === 'migration_required' || state?.userSettingsReady === false) {
-    return notifText('Migratsiya kerak', 'Нужна миграция', 'Migration needed');
+    return notifText('Sozlanmoqda', 'Настраивается', 'Setting up');
   }
   if (state?.status === 'syncing') return notifText('Sinxronlanmoqda', 'Синхронизация', 'Syncing');
   if (state?.status === 'error') return notifText('Xatolik', 'Ошибка', 'Error');
@@ -428,41 +411,23 @@ function notificationBadgeState(state = pushNotificationState) {
 
 function notificationSupportLabel(state = pushNotificationState) {
   if (state?.userSettingsReady === false) {
-    return notifText('DB migratsiya kutilmoqda', 'Ожидается миграция БД', 'DB migration pending');
+    return notifText('Sozlanmoqda', 'Настраивается', 'Setting up');
   }
-  return notifText('Telegram Worker', 'Telegram Worker', 'Telegram Worker');
+  return notifText('Telegram bot', 'Telegram bot', 'Telegram bot');
 }
 
 function notificationPermissionLabel(state = pushNotificationState) {
   if (state?.userSettingsReady === false) {
-    return notifText('Sozlama topilmadi', 'Настройка не найдена', 'Setting missing');
+    return notifText('Hali tayyor emas', 'Пока не готово', 'Not ready yet');
   }
   return state?.notificationEnabled === false
     ? notifText('O‘chirilgan', 'Отключено', 'Disabled')
     : notifText('Yoqilgan', 'Включено', 'Enabled');
 }
 
-function notificationProviderLabel() {
-  return 'Telegram Worker';
-}
-
-function notificationDeviceLabel(state = pushNotificationState) {
-  const shell = state?.appKind === 'mini_app'
-    ? notifText('Mini App', 'Mini App', 'Mini App')
-    : notifText('Web App', 'Web App', 'Web App');
-  const tokenState = state?.tokenRegistered
-    ? notifText(
-      `Eski push token · ${state.tokenPreview || 'saqlangan'}`,
-      `Старый push-токен · ${state.tokenPreview || 'сохранён'}`,
-      `Old push token · ${state.tokenPreview || 'stored'}`
-    )
-    : notifText('Telegram orqali ishlaydi', 'Работает через Telegram', 'Handled via Telegram');
-  return `${shell} · ${tokenState}`;
-}
-
 function notificationReminderLabel(state = pushNotificationState) {
   if (state?.userSettingsReady === false) {
-    return notifText('Ustun topilmadi', 'Колонка не найдена', 'Column missing');
+    return notifText('Hali tayyor emas', 'Пока не готово', 'Not ready yet');
   }
   return state?.notificationEnabled === false
     ? notifText('Basic reminder o‘chiq', 'Базовые напоминания выключены', 'Basic reminders are off')
@@ -495,11 +460,11 @@ function notificationHelpText(state = pushNotificationState) {
   const snapshot = getSubscriptionSnapshotLocal();
 
   if (state?.userSettingsReady === false) {
-    return notificationMigrationHelp();
+    return notificationSetupHelp();
   }
 
   if (state?.lastError) {
-    return state.lastError;
+    return notificationErrorHelp();
   }
 
   if (state?.notificationEnabled === false) {
@@ -540,9 +505,6 @@ function updateNotificationSettingsUI() {
 
   setText('notif-support-value', notificationSupportLabel(state));
   setText('notif-permission-value', notificationPermissionLabel(state));
-  setText('notif-provider-value', notificationProviderLabel(state));
-  setText('notif-device-value', notificationDeviceLabel(state));
-  setText('notif-project-value', notificationProjectLabel());
   setText('notif-sync-value', formatNotificationSyncTime(state.lastSyncAt || state.lastReminderAt || state.lastReportAt));
   setText('notif-reminders-value', notificationReminderLabel(state));
   setText('notif-premium-value', notificationPremiumLabel(state));
@@ -624,7 +586,7 @@ async function refreshNotificationPreferences(options = {}) {
     updateNotificationSettingsUI();
     if (options.showToast) {
       if (pushNotificationState.userSettingsReady === false) {
-        showErr(notificationMigrationHelp());
+        showErr(notificationSetupHelp());
       } else {
         showErr(notifText('Notification holati yangilandi ✅', 'Статус уведомлений обновлён ✅', 'Notification status refreshed ✅'));
       }
@@ -639,7 +601,7 @@ async function refreshNotificationPreferences(options = {}) {
     };
     updateNotificationSettingsUI();
     if (options.showToast) {
-      showErr(notifText('Notification holatini yangilab bo‘lmadi', 'Не удалось обновить статус уведомлений', 'Failed to refresh notification status') + ': ' + (error?.message || error));
+      showErr(notifText('Notification holatini yangilab bo‘lmadi', 'Не удалось обновить статус уведомлений', 'Failed to refresh notification status'));
     }
     return null;
   }
@@ -671,7 +633,7 @@ async function saveNotificationPreference(enabled) {
   }
 
   if (userNotificationColumnsSupported === false) {
-    showErr(notificationMigrationHelp());
+    showErr(notificationSetupHelp());
     return null;
   }
 
@@ -693,7 +655,7 @@ async function saveNotificationPreference(enabled) {
       userNotificationColumnsSupported = false;
       syncNotificationUserState({}, { schemaReady: false, status: 'error' });
       updateNotificationSettingsUI();
-      showErr(notificationMigrationHelp());
+      showErr(notificationSetupHelp());
       return null;
     }
     if (result.error) throw result.error;
@@ -732,7 +694,7 @@ async function saveNotificationPreference(enabled) {
       lastError: error?.message || String(error),
     };
     updateNotificationSettingsUI();
-    showErr(notifText('Notification sozlamasini saqlab bo‘lmadi', 'Не удалось сохранить настройки уведомлений', 'Failed to save notification settings') + ': ' + (error?.message || error));
+    showErr(notifText('Notification sozlamasini saqlab bo‘lmadi', 'Не удалось сохранить настройки уведомлений', 'Failed to save notification settings'));
     return null;
   }
 }
