@@ -27,11 +27,19 @@ import AppOverlays from './components/overlays/AppOverlays.vue'
 import { bootLegacyBundle } from './lib/loadLegacyScripts'
 import { installRouteBridge, useRouteState } from './router/route-store'
 
-const DashboardView = defineAsyncComponent(() => import('./views/DashboardView.vue'))
-const AddView = defineAsyncComponent(() => import('./views/AddView.vue'))
-const HistoryView = defineAsyncComponent(() => import('./views/HistoryView.vue'))
-const FinanceView = defineAsyncComponent(() => import('./views/FinanceView.vue'))
-const ProfileView = defineAsyncComponent(() => import('./views/ProfileView.vue'))
+const viewLoaders = {
+  dash: () => import('./views/DashboardView.vue'),
+  finance: () => import('./views/FinanceView.vue'),
+  add: () => import('./views/AddView.vue'),
+  profile: () => import('./views/ProfileView.vue'),
+  hist: () => import('./views/HistoryView.vue'),
+}
+
+const DashboardView = defineAsyncComponent(viewLoaders.dash)
+const AddView = defineAsyncComponent(viewLoaders.add)
+const HistoryView = defineAsyncComponent(viewLoaders.hist)
+const FinanceView = defineAsyncComponent(viewLoaders.finance)
+const ProfileView = defineAsyncComponent(viewLoaders.profile)
 
 installRouteBridge()
 const routeState = useRouteState()
@@ -42,6 +50,13 @@ const mountedViews = reactive({
   add: false,
   profile: false,
   hist: false,
+})
+const viewPreloadState = reactive({
+  dash: null,
+  finance: null,
+  add: null,
+  profile: null,
+  hist: null,
 })
 
 function resolveViewKey(tab) {
@@ -65,6 +80,23 @@ function resolveViewId(tab) {
   return key === 'finance' ? 'view-finance' : `view-${key}`
 }
 
+function preloadView(tab) {
+  const key = resolveViewKey(tab)
+  if (!viewLoaders[key]) return Promise.resolve()
+  if (!viewPreloadState[key]) {
+    viewPreloadState[key] = viewLoaders[key]().catch((error) => {
+      console.warn('[view-bridge] preload failed', key, error)
+      viewPreloadState[key] = null
+      throw error
+    })
+  }
+  return viewPreloadState[key]
+}
+
+function preloadAllViews() {
+  return Promise.allSettled(Object.keys(viewLoaders).map((key) => preloadView(key)))
+}
+
 async function waitForViewElement(tab, attempts = 40) {
   if (typeof document === 'undefined') return
   const id = resolveViewId(tab)
@@ -76,6 +108,7 @@ async function waitForViewElement(tab, attempts = 40) {
 }
 
 async function ensureViewMounted(tab) {
+  await preloadView(tab)
   markViewMounted(tab)
   await waitForViewElement(tab)
   if (typeof window !== 'undefined' && typeof window.applyLang === 'function') {
@@ -91,11 +124,16 @@ onMounted(async () => {
   if (typeof window !== 'undefined') {
     window.__KASSA_VIEW_BRIDGE__ = {
       ensureViewMounted,
+      preloadView,
+      preloadAllViews,
       isViewMounted: (tab) => !!mountedViews[resolveViewKey(tab)],
       resolveViewKey,
     }
   }
   await nextTick()
+  setTimeout(() => {
+    preloadAllViews().catch(() => {})
+  }, 0)
   requestAnimationFrame(() => {
     bootLegacyBundle().then(() => {
       window.__KASSA_ROUTER__?.requestCurrentTab?.()

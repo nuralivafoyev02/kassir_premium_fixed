@@ -2398,6 +2398,14 @@ function openFinanceSection() {
   return goTab(getPreferredFinanceTab());
 }
 
+function warmViewChunk(tab) {
+  try {
+    window.__KASSA_VIEW_BRIDGE__?.preloadView?.(tab);
+  } catch (error) {
+    console.warn('[view-bridge] preload request failed', tab, error);
+  }
+}
+
 async function ensureViewReady(tab) {
   try {
     await window.__KASSA_VIEW_BRIDGE__?.ensureViewMounted?.(tab);
@@ -2471,6 +2479,7 @@ function goTab(tab, opts = {}) {
 
 bindRouteBridge();
 window.openFinanceSection = openFinanceSection;
+window.warmViewChunk = warmViewChunk;
 
 async function loadMore() {
   return;
