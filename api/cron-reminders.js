@@ -2,6 +2,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const { createTelegramOps } = require('../lib/telegram-ops.cjs');
+const subscriptionHelpers = require('../public/kassa.subscription.js');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPA_URL = process.env.SUPABASE_URL;
@@ -64,6 +65,9 @@ if (!SUPA_URL) throw new Error("SUPABASE_URL yo'q");
 if (!SUPA_KEY) throw new Error("SUPABASE_KEY yo'q");
 
 const db = createClient(SUPA_URL, SUPA_KEY);
+const SUBSCRIPTION_FIELDS = Array.isArray(subscriptionHelpers.SUBSCRIPTION_FIELDS)
+  ? subscriptionHelpers.SUBSCRIPTION_FIELDS.slice()
+  : ['plan_code', 'subscription_status', 'subscription_start_at', 'subscription_end_at', 'trial_end_at', 'canceled_at', 'grace_until'];
 const cronLogger = createTelegramOps({
   botToken: BOT_TOKEN,
   logChannelId: process.env.LOG_CHANNEL_ID,
@@ -128,6 +132,22 @@ function missingColumn(error, column) {
     msg.includes('unknown column') ||
     msg.includes('could not find the column')
   );
+}
+
+function hasSubscriptionSchema(row) {
+  if (typeof subscriptionHelpers.hasSubscriptionSchema === 'function') {
+    return subscriptionHelpers.hasSubscriptionSchema(row || {});
+  }
+  return SUBSCRIPTION_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(row || {}, field));
+}
+
+function canUseNotificationFeature(row, featureKey) {
+  if (typeof subscriptionHelpers.canUseNotificationFeature === 'function') {
+    return subscriptionHelpers.canUseNotificationFeature(row || {}, featureKey, {
+      schemaReady: hasSubscriptionSchema(row),
+    });
+  }
+  return { allowed: true };
 }
 
 function getCronRequestSecret(req) {
@@ -368,9 +388,10 @@ function toUzDateTime(value, timeZone = TASHKENT_TIME_ZONE) {
 }
 
 async function fetchUsersForDailyReminderPage(dayStartIso, { afterUserId = null, limit = 100 } = {}) {
+  const subscriptionFields = SUBSCRIPTION_FIELDS.join(', ');
   let query = db
     .from('users')
-    .select('user_id, full_name, daily_reminder_enabled, last_daily_reminder_at')
+    .select(`user_id, full_name, daily_reminder_enabled, last_daily_reminder_at, ${subscriptionFields}`)
     .or(`last_daily_reminder_at.is.null,last_daily_reminder_at.lt.${dayStartIso}`)
     .order('user_id', { ascending: true })
     .limit(limit);
@@ -381,7 +402,7 @@ async function fetchUsersForDailyReminderPage(dayStartIso, { afterUserId = null,
 
   let res = await query;
 
-  if (res.error && missingColumn(res.error, 'daily_reminder_enabled')) {
+  if (res.error && (missingColumn(res.error, 'daily_reminder_enabled') || SUBSCRIPTION_FIELDS.some((field) => missingColumn(res.error, field)))) {
     let fallback = db
       .from('users')
       .select('user_id, full_name, last_daily_reminder_at')
@@ -404,9 +425,10 @@ async function fetchUsersForDailyReminderPage(dayStartIso, { afterUserId = null,
 }
 
 async function fetchUsersForDailyReportPage(dayStartIso, { afterUserId = null, limit = 100 } = {}) {
+  const subscriptionFields = SUBSCRIPTION_FIELDS.join(', ');
   let query = db
     .from('users')
-    .select('user_id, full_name, daily_reminder_enabled, last_daily_report_at')
+    .select(`user_id, full_name, daily_reminder_enabled, last_daily_report_at, ${subscriptionFields}`)
     .or(`last_daily_report_at.is.null,last_daily_report_at.lt.${dayStartIso}`)
     .order('user_id', { ascending: true })
     .limit(limit);
@@ -417,7 +439,7 @@ async function fetchUsersForDailyReportPage(dayStartIso, { afterUserId = null, l
 
   let res = await query;
 
-  if (res.error && missingColumn(res.error, 'daily_reminder_enabled')) {
+  if (res.error && (missingColumn(res.error, 'daily_reminder_enabled') || SUBSCRIPTION_FIELDS.some((field) => missingColumn(res.error, field)))) {
     let fallback = db
       .from('users')
       .select('user_id, full_name, last_daily_report_at')
@@ -561,7 +583,12 @@ async function processDailyReminders(now, meta = {}) {
     totalScanned += rawRows.length;
     lastUserId = rawRows[rawRows.length - 1]?.user_id ?? lastUserId;
 
-    const rows = rawRows.filter((row) => row && row.user_id && row.daily_reminder_enabled !== false);
+    const rows = rawRows.filter((row) => (
+      row &&
+      row.user_id &&
+      row.daily_reminder_enabled !== false &&
+      canUseNotificationFeature(row, 'daily_reminder').allowed
+    ));
     result.checked += rows.length;
 
     for (const row of rows) {
@@ -698,7 +725,12 @@ async function processDailyReports(now, meta = {}) {
     totalScanned += rawRows.length;
     lastUserId = rawRows[rawRows.length - 1]?.user_id ?? lastUserId;
 
-    const rows = rawRows.filter((row) => row && row.user_id && row.daily_reminder_enabled !== false);
+    const rows = rawRows.filter((row) => (
+      row &&
+      row.user_id &&
+      row.daily_reminder_enabled !== false &&
+      canUseNotificationFeature(row, 'daily_report').allowed
+    ));
     result.checked += rows.length;
 
     for (const row of rows) {

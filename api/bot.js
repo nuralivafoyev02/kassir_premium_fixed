@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { createTelegramOps } = require('../lib/telegram-ops.cjs');
+const subscriptionHelpers = require('../public/kassa.subscription.js');
 
 // ─── ENV CHECKS ──────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -164,6 +165,9 @@ let txSourceColumnSupported = null;
 let txSourceRefColumnSupported = null;
 let debtSettlementColumnSupported = null;
 let categoryLimitNameColumnSupported = null;
+const SUBSCRIPTION_FIELDS = Array.isArray(subscriptionHelpers.SUBSCRIPTION_FIELDS)
+  ? subscriptionHelpers.SUBSCRIPTION_FIELDS.slice()
+  : ['plan_code', 'subscription_status', 'subscription_start_at', 'subscription_end_at', 'trial_end_at', 'canceled_at', 'grace_until', 'created_at', 'updated_at'];
 
 async function downloadTelegramFileBuffer(fileId) {
   const fileLink = await bot.getFileLink(fileId);
@@ -230,6 +234,128 @@ function isQuotaOrRateLimitError(error) {
 function isDuplicateKeyError(error) {
   const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
   return msg.includes('duplicate key') || msg.includes('unique constraint') || msg.includes('already exists');
+}
+
+function hasSubscriptionSchema(user) {
+  if (typeof subscriptionHelpers.hasSubscriptionSchema === 'function') {
+    return subscriptionHelpers.hasSubscriptionSchema(user || {});
+  }
+  return SUBSCRIPTION_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(user || {}, field));
+}
+
+function getSubscriptionSnapshotForUser(user, options = {}) {
+  if (typeof subscriptionHelpers.getSubscriptionSnapshot === 'function') {
+    return subscriptionHelpers.getSubscriptionSnapshot(user || {}, {
+      ...options,
+      schemaReady: options.schemaReady ?? hasSubscriptionSchema(user),
+    });
+  }
+  return {
+    schemaReady: options.schemaReady ?? hasSubscriptionSchema(user),
+    planCode: 'free',
+    effectiveStatus: 'free',
+    planTitle: 'Bepul',
+    uiStatusLabel: 'Obuna bo\'lmagan',
+    isPremium: false,
+  };
+}
+
+function evaluateFeatureAccess(featureKey, user, context = {}) {
+  if (typeof subscriptionHelpers.evaluateFeatureGate === 'function') {
+    return subscriptionHelpers.evaluateFeatureGate(featureKey, user || {}, {
+      ...context,
+      schemaReady: context.schemaReady ?? hasSubscriptionSchema(user),
+    });
+  }
+  return { allowed: true, featureKey, snapshot: getSubscriptionSnapshotForUser(user, context), degraded: true };
+}
+
+function getPremiumSupportUrl() {
+  return String(process.env.PREMIUM_SUPPORT_URL || process.env.WEBAPP_URL || 'https://t.me/uyqur_nurali').trim();
+}
+
+function buildUpgradeReplyMarkup() {
+  const url = getPremiumSupportUrl();
+  if (!url) return undefined;
+  return {
+    inline_keyboard: [[{ text: '💎 Premium ga o\'tish', url }]],
+  };
+}
+
+function getFeatureBlockedMessage(featureKey) {
+  if (featureKey === 'plan_create' || featureKey === 'limit_create') {
+    return `💎 <b>Siz bepul tarif limitiga yetdingiz.</b>
+
+Bepul tarifda faqat 1 ta faol reja va limit ishlatiladi.
+Premium orqali cheksiz reja, limit, qarz va kengaytirilgan hisobotlardan foydalanishingiz mumkin.`;
+  }
+  if (featureKey === 'debt_create') {
+    return `💎 <b>Siz bepul tarif limitiga yetdingiz.</b>
+
+Bepul tarifda faqat 1 ta faol qarz saqlanadi.
+Premium orqali cheksiz qarz, reja, limit va qulay eslatmalardan foydalanishingiz mumkin.`;
+  }
+  if (featureKey === 'advanced_reports') {
+    return `💎 <b>PDF va kengaytirilgan hisobotlar Premium tarifida.</b>
+
+Premium orqali PDF, Excel va keyingi kengaytirilgan hisobot funksiyalarini ochishingiz mumkin.`;
+  }
+  return `💎 <b>Bu imkoniyat Premium tarifida mavjud.</b>
+
+Premium orqali ko'proq funksiyalar va yuqori limitlardan foydalanishingiz mumkin.`;
+}
+
+async function sendFeatureBlockedMessage(chatId, featureKey) {
+  await bot.sendMessage(chatId, getFeatureBlockedMessage(featureKey), {
+    parse_mode: 'HTML',
+    reply_markup: buildUpgradeReplyMarkup(),
+  }).catch(() => null);
+}
+
+function buildSubscriptionUpdatePayload({
+  planCode = 'premium_monthly',
+  status = 'active',
+  durationDays = 30,
+  now = new Date(),
+} = {}) {
+  const startedAt = new Date(now);
+  const endAt = new Date(startedAt.getTime() + Math.max(1, Number(durationDays || 30)) * 86400000);
+  if (planCode === 'free') {
+    return {
+      plan_code: 'free',
+      subscription_status: 'free',
+      subscription_start_at: null,
+      subscription_end_at: null,
+      trial_end_at: null,
+      canceled_at: null,
+      grace_until: null,
+    };
+  }
+  return {
+    plan_code: planCode,
+    subscription_status: status,
+    subscription_start_at: startedAt.toISOString(),
+    subscription_end_at: endAt.toISOString(),
+    trial_end_at: null,
+    canceled_at: null,
+    grace_until: null,
+  };
+}
+
+async function updateUserSubscription(userId, payload) {
+  return db.from('users').update(payload).eq('user_id', userId);
+}
+
+function buildAdminSubscriptionText(targetUserId, row) {
+  const snapshot = getSubscriptionSnapshotForUser(row);
+  return `💎 <b>OBUNA HOLATI</b>
+
+👤 User: <b>${esc(row?.full_name || `User ${targetUserId}`)}</b>
+🆔 ID: <code>${targetUserId}</code>
+📦 Tarif: <b>${esc(snapshot.planTitle)}</b>
+📍 Holat: <b>${esc(snapshot.uiStatusLabel)}</b>
+💰 Narx: <b>${esc(snapshot.priceLabel || '0 so\'m')}</b>
+${snapshot.subscriptionStartAt ? `🗓 Boshlangan: <b>${esc(fmtDateTime(snapshot.subscriptionStartAt))}</b>\n` : ''}${snapshot.accessUntil ? `⌛️ Tugashi: <b>${esc(fmtDateTime(snapshot.accessUntil))}</b>\n` : ''}`;
 }
 
 function categoryLimitNameColumn() {
@@ -800,7 +926,13 @@ ${lastLine}`;
 
 function buildRecentUsersText(rows, totalUsers, { offset = 0, pageSize = ADMIN_USERS_PAGE_SIZE } = {}) {
   const body = rows?.length
-    ? rows.map((u, i) => `${offset + i + 1}. <b>${esc(u.full_name || `User ${u.user_id}`)}</b>\n   ID: <code>${u.user_id}</code>${u.phone_number ? `\n   Tel: ${esc(u.phone_number)}` : ''}${u.created_at ? `\n   Qo\'shilgan: ${esc(fmtDateTime(u.created_at))}` : ''}`).join('\n\n')
+    ? rows.map((u, i) => {
+      const snapshot = getSubscriptionSnapshotForUser(u);
+      const subscriptionLine = snapshot?.schemaReady !== false
+        ? `\n   Tarif: <b>${esc(snapshot.planTitle)}</b> · ${esc(snapshot.uiStatusLabel)}`
+        : '';
+      return `${offset + i + 1}. <b>${esc(u.full_name || `User ${u.user_id}`)}</b>\n   ID: <code>${u.user_id}</code>${u.phone_number ? `\n   Tel: ${esc(u.phone_number)}` : ''}${subscriptionLine}${u.created_at ? `\n   Qo\'shilgan: ${esc(fmtDateTime(u.created_at))}` : ''}`;
+    }).join('\n\n')
     : 'Hozircha userlar topilmadi.';
 
   const page = totalUsers > 0 ? Math.floor(offset / pageSize) + 1 : 1;
@@ -836,14 +968,28 @@ async function fetchAdminUsersPage(offset = 0, pageSize = ADMIN_USERS_PAGE_SIZE)
   const safeOffset = Math.max(0, Number(offset || 0));
   const safePageSize = Math.max(1, Math.min(25, Number(pageSize || ADMIN_USERS_PAGE_SIZE)));
   const to = safeOffset + safePageSize - 1;
-  const [{ data: rows, error }, totalUsers] = await Promise.all([
-    db.from('users')
-      .select('user_id, full_name, phone_number, created_at')
-      .order('created_at', { ascending: false })
-      .order('user_id', { ascending: false })
-      .range(safeOffset, to),
+  const baseFields = 'user_id, full_name, phone_number, created_at';
+  const extendedFields = `${baseFields}, ${SUBSCRIPTION_FIELDS.join(', ')}`;
+  const [userResponse, totalUsers] = await Promise.all([
+    (async () => {
+      let response = await db.from('users')
+        .select(extendedFields)
+        .order('created_at', { ascending: false })
+        .order('user_id', { ascending: false })
+        .range(safeOffset, to);
+      if (response.error && SUBSCRIPTION_FIELDS.some((field) => isMissingColumnError(response.error, field))) {
+        response = await db.from('users')
+          .select(baseFields)
+          .order('created_at', { ascending: false })
+          .order('user_id', { ascending: false })
+          .range(safeOffset, to);
+      }
+      return response;
+    })(),
     getExactCount(db.from('users').select('*', { count: 'exact', head: true })),
   ]);
+
+  const { data: rows, error } = userResponse;
 
   return {
     rows: rows || [],
@@ -894,6 +1040,9 @@ function buildBroadcastGuideText() {
 <b>/admin</b> — admin panelni ochadi
 <b>/message Matn</b> — broadcast draft yaratadi
 <b>/notif</b> — notification sozlamalar paneli
+<b>/premium user_id 30</b> — 30 kunlik premium beradi
+<b>/freeplan user_id</b> — userni bepul tarifga qaytaradi
+<b>/subinfo user_id</b> — user obunasini ko'rsatadi
 
 <b>Tugmali broadcast:</b>
 <code>/message Assalomu alaykum
@@ -1477,11 +1626,23 @@ async function ensureExpenseCategory(userId, categoryName) {
   return fresh.find(cat => cat.type === 'expense' && normalizeTextForMatch(cat.name) === normalized) || null;
 }
 
-async function savePlanIntent(userId, chatId, intent) {
+async function savePlanIntent(userId, chatId, intent, user = null) {
   const category = await ensureExpenseCategory(userId, intent.categoryName);
   const categoryName = category?.name || intent.categoryName;
   const existingRows = await fetchCategoryLimitCandidates(userId);
   const current = findExistingCategoryLimit(existingRows, categoryName, intent.monthKey);
+
+  if (!current) {
+    const activePlansCount = (existingRows || []).filter((row) => row?.is_active !== false).length;
+    const gate = evaluateFeatureAccess('plan_create', user, {
+      activePlansCount,
+      activeLimitsCount: activePlansCount,
+    });
+    if (!gate.allowed) {
+      await sendFeatureBlockedMessage(chatId, gate.featureKey);
+      return true;
+    }
+  }
 
   async function writeCategoryLimit(mode, rowId = null) {
     let activeNameCol = categoryLimitNameColumn();
@@ -1681,7 +1842,22 @@ async function createDebtSettlementTx(userId, debt, amount) {
   return saved || null;
 }
 
-async function saveDebtIntent(userId, chatId, intent) {
+async function saveDebtIntent(userId, chatId, intent, user = null) {
+  const { count, error: countError } = await db
+    .from('debts')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('status', 'open');
+  if (countError) throw countError;
+
+  const gate = evaluateFeatureAccess('debt_create', user, {
+    activeDebtsCount: Number(count || 0),
+  });
+  if (!gate.allowed) {
+    await sendFeatureBlockedMessage(chatId, gate.featureKey);
+    return true;
+  }
+
   const payload = {
     user_id: userId,
     person_name: intent.personName,
@@ -2307,6 +2483,61 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
+    if (text.startsWith('/premium ') || text.startsWith('/freeplan ') || text.startsWith('/subinfo ')) {
+      if (!isAdmin(userId)) {
+        await bot.sendMessage(chatId, '⛔️ Bu buyruq faqat adminlar uchun.').catch(() => { });
+        return res.status(200).json({ ok: true });
+      }
+
+      const parts = String(text || '').trim().split(/\s+/);
+      const command = parts[0];
+      const targetUserId = Number(parts[1] || 0);
+      if (!targetUserId) {
+        await bot.sendMessage(chatId, '⚠️ Format: /premium <user_id> [kun], /freeplan <user_id>, /subinfo <user_id>').catch(() => { });
+        return res.status(200).json({ ok: true });
+      }
+
+      if (command === '/premium') {
+        const durationDays = Math.max(1, Number(parts[2] || 30));
+        const payload = buildSubscriptionUpdatePayload({ planCode: 'premium_monthly', status: 'active', durationDays });
+        const { error } = await updateUserSubscription(targetUserId, payload);
+        if (error) {
+          await bot.sendMessage(chatId, `⚠️ Premium berishda xatolik: ${esc(error.message || 'noma\'lum')}`, { parse_mode: 'HTML' }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+      }
+
+      if (command === '/freeplan') {
+        const payload = buildSubscriptionUpdatePayload({ planCode: 'free' });
+        const { error } = await updateUserSubscription(targetUserId, payload);
+        if (error) {
+          await bot.sendMessage(chatId, `⚠️ Tarifni free holatiga qaytarishda xatolik: ${esc(error.message || 'noma\'lum')}`, { parse_mode: 'HTML' }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
+      }
+
+      let fetchResponse = await db.from('users')
+        .select(`user_id, full_name, ${SUBSCRIPTION_FIELDS.join(', ')}`)
+        .eq('user_id', targetUserId)
+        .maybeSingle();
+      if (fetchResponse.error && SUBSCRIPTION_FIELDS.some((field) => isMissingColumnError(fetchResponse.error, field))) {
+        fetchResponse = await db.from('users')
+          .select('user_id, full_name')
+          .eq('user_id', targetUserId)
+          .maybeSingle();
+      }
+      const { data: updatedUser, error: fetchError } = fetchResponse;
+      if (fetchError) {
+        await bot.sendMessage(chatId, `⚠️ User obunasini o'qishda xatolik: ${esc(fetchError.message || 'noma\'lum')}`, { parse_mode: 'HTML' }).catch(() => { });
+        return res.status(200).json({ ok: true });
+      }
+
+      await bot.sendMessage(chatId, buildAdminSubscriptionText(targetUserId, updatedUser || {}), {
+        parse_mode: 'HTML',
+      }).catch(() => { });
+      return res.status(200).json({ ok: true });
+    }
+
 
     if (text === '/notif' || text.startsWith('/notif ')) {
       if (!isAdmin(userId)) {
@@ -2710,7 +2941,7 @@ module.exports = async (req, res) => {
       const debtIntent = parseDebtIntent(text);
       if (debtIntent) {
         try {
-          await saveDebtIntent(userId, chatId, debtIntent);
+          await saveDebtIntent(userId, chatId, debtIntent, user);
           return res.status(200).json({ ok: true });
         } catch (error) {
           await logErr('debt-intent', error, { userId, text });
@@ -2722,7 +2953,7 @@ module.exports = async (req, res) => {
       const planIntent = parsePlanIntent(text);
       if (planIntent) {
         try {
-          await savePlanIntent(userId, chatId, planIntent);
+          await savePlanIntent(userId, chatId, planIntent, user);
           return res.status(200).json({ ok: true });
         } catch (error) {
           await logErr('plan-intent', error, { userId, text });

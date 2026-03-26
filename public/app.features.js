@@ -18,6 +18,28 @@
   let planAppNotifyReady = false;
   let lastFeatureRefreshAt = 0;
   const planNotifyState = new Map();
+  const getSubscriptionSnapshot = () => (
+    typeof window.getSubscriptionSnapshot === 'function'
+      ? window.getSubscriptionSnapshot()
+      : null
+  );
+  const getFeatureGate = (featureKey, context = {}) => (
+    typeof window.getFeatureGateResult === 'function'
+      ? window.getFeatureGateResult(featureKey, context)
+      : { allowed: true, featureKey, snapshot: getSubscriptionSnapshot(), degraded: true }
+  );
+  const openFeaturePaywall = (featureKey, options = {}) => {
+    if (typeof window.openUpgradePaywall === 'function') {
+      return window.openUpgradePaywall(featureKey, options);
+    }
+    showErr(currentLang === 'ru' ? 'Premium тариф talab qilinadi' : currentLang === 'en' ? 'Premium required' : 'Premium tarif talab qilinadi');
+    return false;
+  };
+  const handleFeatureGateError = (error, fallbackFeatureKey, source = 'feature') => (
+    typeof window.handleUpgradeRequiredError === 'function'
+      ? window.handleUpgradeRequiredError(error, fallbackFeatureKey, source)
+      : false
+  );
 
   const debtStoreKey = () => `kassa_debts_${UID}`;
   const planStoreKey = () => `kassa_plans_${UID}`;
@@ -549,6 +571,34 @@
 
   function persistLocalDebts() { writeJson(debtStoreKey(), debtList); }
   function persistLocalPlans() { writeJson(planStoreKey(), planList); }
+  const getActiveDebtCount = ({ excludingId = null } = {}) => debtList.filter((item) => (
+    item.status === 'open' && (excludingId == null || Number(item.id) !== Number(excludingId))
+  )).length;
+  const getActivePlanCount = ({ excludingId = null } = {}) => planList.filter((item) => (
+    item.is_active !== false && (excludingId == null || Number(item.id) !== Number(excludingId))
+  )).length;
+  const requireDebtCreateAccess = ({ excludingId = null, source = 'debt' } = {}) => {
+    const gate = getFeatureGate('debt_create', { activeDebtsCount: getActiveDebtCount({ excludingId }) });
+    if (gate.allowed) return true;
+    openFeaturePaywall(gate.featureKey, { gate, source });
+    return false;
+  };
+  const requirePlanCreateAccess = ({ excludingId = null, source = 'plan' } = {}) => {
+    const activePlansCount = getActivePlanCount({ excludingId });
+    const gate = getFeatureGate('plan_create', {
+      activePlansCount,
+      activeLimitsCount: activePlansCount,
+    });
+    if (gate.allowed) return true;
+    openFeaturePaywall(gate.featureKey, { gate, source });
+    return false;
+  };
+  const requireCustomReminderAccess = ({ source = 'debt' } = {}) => {
+    const gate = getFeatureGate('custom_reminder_time');
+    if (gate.allowed) return true;
+    openFeaturePaywall(gate.featureKey, { gate, source });
+    return false;
+  };
 
   function debtDirectionLabel(direction) {
     return direction === 'payable'
@@ -798,6 +848,7 @@
   };
 
   window.setDebtReminderPreset = function setDebtReminderPreset(mode = 'same') {
+    if (mode === 'custom' && !requireCustomReminderAccess({ source: 'debt' })) return;
     updateDebtReminderPresetUI(mode);
     if (mode !== 'custom') {
       const dueAt = combineDateTimeParts('debt-due');
@@ -812,6 +863,7 @@
   };
 
   window.openDebtForm = function openDebtForm(id = null) {
+    if (!id && !requireDebtCreateAccess({ source: 'debt' })) return;
     const debt = debtList.find(item => Number(item.id) === Number(id));
     $('debt-id').value = debt?.id || '';
     setDebtDirectionButtons(debt?.direction || 'receivable');
@@ -846,6 +898,8 @@
     if (!amount) return showErr(tt('err_amount_required', 'Summani kiriting'));
     if (!due_at) return showErr(currentLang === 'ru' ? 'Qaytarish sanasini tanlang' : currentLang === 'en' ? 'Choose a due date' : 'Qaytarish sanasini tanlang');
     if (reminderMode === 'custom' && !remind_at) return showErr(currentLang === 'ru' ? 'Напоминание uchun sana va vaqtni kiriting' : currentLang === 'en' ? 'Enter the reminder date and time' : 'Eslatma sana va vaqtini kiriting');
+    if (!requireDebtCreateAccess({ excludingId: id, source: 'debt' })) return;
+    if (reminderMode === 'custom' && !requireCustomReminderAccess({ source: 'debt' })) return;
 
     const payload = normalizeDebt({ id: id || Date.now(), user_id: UID, person_name, amount, direction, due_at, remind_at, note, status: 'open' });
     if (!db || debtTableAvailable === false) {
@@ -861,6 +915,7 @@
       const { data, error } = await db.from('debts').update({ person_name, amount, direction, due_at, remind_at, note }).eq('id', id).eq('user_id', UID).select().maybeSingle();
       if (error) {
         if (relationMissing(error, 'debts')) { debtTableAvailable = false; return window.saveDebtForm(); }
+        if (handleFeatureGateError(error, 'debt_create', 'debt')) return;
         return showErr(error.message || 'Debt update failed');
       }
       const row = normalizeDebt(data || payload);
@@ -870,6 +925,7 @@
       const { data, error } = await db.from('debts').insert([{ user_id: UID, person_name, amount, direction, due_at, remind_at, note }]).select().maybeSingle();
       if (error) {
         if (relationMissing(error, 'debts')) { debtTableAvailable = false; return window.saveDebtForm(); }
+        if (handleFeatureGateError(error, 'debt_create', 'debt')) return;
         return showErr(error.message || 'Debt save failed');
       }
       debtList.unshift(normalizeDebt(data || payload));
@@ -1111,6 +1167,7 @@
   }
 
   window.openPlanForm = function openPlanForm(id = null) {
+    if (!id && !requirePlanCreateAccess({ source: 'plan' })) return;
     populatePlanCategoryOptions();
     const plan = planList.find(item => Number(item.id) === Number(id));
     $('plan-id').value = plan?.id || '';
@@ -1141,6 +1198,7 @@
     const mk = $('plan-month-key')?.value || monthKey();
     if (!category_name) return showErr(currentLang === 'ru' ? 'Kategoriyani tanlang' : currentLang === 'en' ? 'Choose a category' : 'Kategoriyani tanlang');
     if (!amount) return showErr(tt('err_amount_required', 'Summani kiriting'));
+    if (is_active && !requirePlanCreateAccess({ excludingId: id, source: 'plan' })) return;
 
     const localExisting = !id ? findExistingPlanLocal({ categoryName: category_name, categoryId, month: mk }) : null;
     const targetId = id || localExisting?.id || null;
@@ -1223,6 +1281,7 @@
     const result = await runPlanMutation(mode, targetId);
     if (result.error) {
       if (relationMissing(result.error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
+      if (handleFeatureGateError(result.error, 'plan_create', 'plan')) return;
       return showErr(result.error.message || (mode === 'update' ? 'Plan update failed' : 'Plan save failed'));
     }
 

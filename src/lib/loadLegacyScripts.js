@@ -33,6 +33,7 @@ export async function bootLegacyBundle() {
   if (window.__kassaLegacyBooted) return
   for (const src of CDN_SCRIPTS) await loadScript(src)
   await loadScript('/theme.config.js')
+  await loadScript('/kassa.subscription.js')
   await loadScript('/app.js')
   await loadScript('/app.features.js')
   window.__kassaLegacyBooted = true

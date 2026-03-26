@@ -1,4 +1,5 @@
 import telegramOpsPkg from "../lib/telegram-ops.cjs";
+import subscriptionHelpers from "../public/kassa.subscription.js";
 import {
   buildPublicNotificationConfig,
 } from "../types/notifications.mjs";
@@ -10,6 +11,9 @@ import {
 import { sendNotification } from "../services/notifications/send-notification.mjs";
 
 const { createTelegramOps } = telegramOpsPkg;
+const SUBSCRIPTION_FIELDS = Array.isArray(subscriptionHelpers?.SUBSCRIPTION_FIELDS)
+  ? subscriptionHelpers.SUBSCRIPTION_FIELDS.slice()
+  : ["plan_code", "subscription_status", "subscription_start_at", "subscription_end_at", "trial_end_at", "canceled_at", "grace_until"];
 
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
@@ -218,6 +222,22 @@ function sbMissingColumn(error, column) {
     msg.includes("does not exist") ||
     msg.includes("unknown column")
   );
+}
+
+function hasSubscriptionSchema(row) {
+  if (typeof subscriptionHelpers?.hasSubscriptionSchema === "function") {
+    return subscriptionHelpers.hasSubscriptionSchema(row || {});
+  }
+  return SUBSCRIPTION_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(row || {}, field));
+}
+
+function canUseNotificationFeature(row, featureKey) {
+  if (typeof subscriptionHelpers?.canUseNotificationFeature === "function") {
+    return subscriptionHelpers.canUseNotificationFeature(row || {}, featureKey, {
+      schemaReady: hasSubscriptionSchema(row),
+    });
+  }
+  return { allowed: true, featureKey, degraded: true };
 }
 
 const TASHKENT_TIME_ZONE = "Asia/Tashkent";
@@ -764,15 +784,16 @@ async function processDueNotifications(env, meta = {}) {
 async function fetchUsersForDailyReminderPage(env, dayStartIso, { afterUserId = null, limit = 100 } = {}) {
   const encodedOr = encodeURIComponent(`(last_daily_reminder_at.is.null,last_daily_reminder_at.lt.${dayStartIso})`);
   const cursor = afterUserId != null ? `&user_id=gt.${encodeURIComponent(afterUserId)}` : "";
+  const subscriptionSelect = SUBSCRIPTION_FIELDS.join(",");
 
   try {
     const rows = await sbFetch(
       env,
-      `/users?select=user_id,full_name,daily_reminder_enabled,last_daily_reminder_at&or=${encodedOr}${cursor}&order=user_id.asc&limit=${limit}`
+      `/users?select=user_id,full_name,daily_reminder_enabled,last_daily_reminder_at,${subscriptionSelect}&or=${encodedOr}${cursor}&order=user_id.asc&limit=${limit}`
     );
     return { rows, migrationRequired: null };
   } catch (error) {
-    if (sbMissingColumn(error, "daily_reminder_enabled")) {
+    if (sbMissingColumn(error, "daily_reminder_enabled") || SUBSCRIPTION_FIELDS.some((field) => sbMissingColumn(error, field))) {
       const rows = await sbFetch(
         env,
         `/users?select=user_id,full_name,last_daily_reminder_at&or=${encodedOr}${cursor}&order=user_id.asc&limit=${limit}`
@@ -807,15 +828,16 @@ async function markDailyReminderSent(env, userId, nowIso) {
 async function fetchUsersForDailyReportPage(env, dayStartIso, { afterUserId = null, limit = 100 } = {}) {
   const encodedOr = encodeURIComponent(`(last_daily_report_at.is.null,last_daily_report_at.lt.${dayStartIso})`);
   const cursor = afterUserId != null ? `&user_id=gt.${encodeURIComponent(afterUserId)}` : "";
+  const subscriptionSelect = SUBSCRIPTION_FIELDS.join(",");
 
   try {
     const rows = await sbFetch(
       env,
-      `/users?select=user_id,full_name,daily_reminder_enabled,last_daily_report_at&or=${encodedOr}${cursor}&order=user_id.asc&limit=${limit}`
+      `/users?select=user_id,full_name,daily_reminder_enabled,last_daily_report_at,${subscriptionSelect}&or=${encodedOr}${cursor}&order=user_id.asc&limit=${limit}`
     );
     return { rows, migrationRequired: null };
   } catch (error) {
-    if (sbMissingColumn(error, "daily_reminder_enabled")) {
+    if (sbMissingColumn(error, "daily_reminder_enabled") || SUBSCRIPTION_FIELDS.some((field) => sbMissingColumn(error, field))) {
       const rows = await sbFetch(
         env,
         `/users?select=user_id,full_name,last_daily_report_at&or=${encodedOr}${cursor}&order=user_id.asc&limit=${limit}`
@@ -917,9 +939,10 @@ async function processDailyReminders(env, now = new Date(), meta = {}) {
     totalScanned += rawRows.length;
     lastUserId = rawRows[rawRows.length - 1]?.user_id ?? lastUserId;
 
-    const candidates = rawRows.filter(
-      (row) => row && toSafeChatId(row.user_id) && row.daily_reminder_enabled !== false
-    );
+    const candidates = rawRows.filter((row) => {
+      if (!row || !toSafeChatId(row.user_id) || row.daily_reminder_enabled === false) return false;
+      return canUseNotificationFeature(row, "daily_reminder").allowed;
+    });
 
     result.checked += candidates.length;
 
@@ -1064,9 +1087,10 @@ async function processDailyReports(env, now = new Date(), meta = {}) {
     totalScanned += rawRows.length;
     lastUserId = rawRows[rawRows.length - 1]?.user_id ?? lastUserId;
 
-    const candidates = rawRows.filter(
-      (row) => row && toSafeChatId(row.user_id) && row.daily_reminder_enabled !== false
-    );
+    const candidates = rawRows.filter((row) => {
+      if (!row || !toSafeChatId(row.user_id) || row.daily_reminder_enabled === false) return false;
+      return canUseNotificationFeature(row, "daily_report").allowed;
+    });
 
     result.checked += candidates.length;
 

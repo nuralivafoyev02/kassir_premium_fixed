@@ -228,6 +228,18 @@ let pushNotificationState = {
   embeddedTelegram: !!tg,
   appKind: tg ? 'mini_app' : 'web_app',
 };
+const subscriptionHelpers = window.KassaSubscription || {};
+const SUBSCRIPTION_USER_FIELDS = Array.isArray(subscriptionHelpers.SUBSCRIPTION_FIELDS)
+  ? subscriptionHelpers.SUBSCRIPTION_FIELDS.slice()
+  : ['plan_code', 'subscription_status', 'subscription_start_at', 'subscription_end_at', 'trial_end_at', 'canceled_at', 'grace_until', 'created_at', 'updated_at'];
+let userSubscriptionColumnsSupported = null;
+let currentPaywallFeatureKey = null;
+let currentPaywallSource = 'settings';
+let subscriptionState = {
+  schemaReady: false,
+  rawUser: null,
+  snapshot: null,
+};
 
 function tt(key, fallback = '') {
   return (T && T[key]) || fallback || key;
@@ -235,6 +247,108 @@ function tt(key, fallback = '') {
 
 function notifText(uz, ru, en) {
   return currentLang === 'ru' ? ru : currentLang === 'en' ? en : uz;
+}
+
+function hasSubscriptionSchema(record) {
+  if (typeof subscriptionHelpers.hasSubscriptionSchema === 'function') {
+    return subscriptionHelpers.hasSubscriptionSchema(record || {});
+  }
+  return SUBSCRIPTION_USER_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(record || {}, field));
+}
+
+function buildFallbackSubscriptionSnapshot(record = {}, options = {}) {
+  const schemaReady = options.schemaReady !== false;
+  const planCode = String(record.plan_code || '') === 'premium_monthly' ? 'premium_monthly' : 'free';
+  const isPremium = schemaReady && planCode === 'premium_monthly' && String(record.subscription_status || '') === 'active';
+  return {
+    schemaReady,
+    planCode,
+    rawStatus: isPremium ? 'active' : 'free',
+    effectiveStatus: isPremium ? 'active' : 'free',
+    planTitle: isPremium ? 'Premium' : 'Bepul',
+    priceLabel: isPremium ? '21 999 so\'m / oy' : '0 so\'m',
+    monthlyPriceUzs: isPremium ? 21999 : 0,
+    isPremium,
+    uiStatusLabel: isPremium ? 'Obuna bo\'lgan' : 'Obuna bo\'lmagan',
+    limits: {
+      activePlans: isPremium ? null : 1,
+      activeDebts: isPremium ? null : 1,
+      activeLimits: isPremium ? null : 1,
+    },
+    features: {
+      customReminderTime: isPremium,
+      advancedReports: isPremium,
+      deepAnalytics: isPremium,
+      aiInsights: isPremium,
+      dailyMorningReminder: isPremium,
+      dailyEveningReminder: isPremium,
+    },
+    badge: {
+      label: isPremium ? 'Obuna bo\'lgan' : 'Obuna bo\'lmagan',
+      tone: isPremium ? 'premium' : 'free',
+      plan_title: isPremium ? 'Premium' : 'Bepul',
+    },
+    subscriptionStartAt: null,
+    subscriptionEndAt: null,
+    trialEndAt: null,
+    canceledAt: null,
+    graceUntil: null,
+    accessUntil: null,
+  };
+}
+
+function buildSubscriptionSnapshot(record = {}, options = {}) {
+  const schemaReady = options.schemaReady !== false;
+  if (typeof subscriptionHelpers.getSubscriptionSnapshot === 'function') {
+    return subscriptionHelpers.getSubscriptionSnapshot(record, { ...options, schemaReady });
+  }
+  return buildFallbackSubscriptionSnapshot(record, { ...options, schemaReady });
+}
+
+function syncSubscriptionState(record = null, options = {}) {
+  const raw = record || subscriptionState.rawUser || {};
+  const schemaReady = options.schemaReady !== false;
+  subscriptionState.rawUser = raw;
+  subscriptionState.schemaReady = schemaReady;
+  subscriptionState.snapshot = buildSubscriptionSnapshot(raw, { now: options.now || new Date(), schemaReady });
+  return subscriptionState.snapshot;
+}
+
+function getSubscriptionSnapshotLocal() {
+  return subscriptionState.snapshot || syncSubscriptionState(subscriptionState.rawUser || {}, { schemaReady: subscriptionState.schemaReady !== false });
+}
+
+function getPricingPlansData() {
+  if (typeof subscriptionHelpers.getPricingPlans === 'function') {
+    return subscriptionHelpers.getPricingPlans();
+  }
+  return [
+    { code: 'free', title: 'Bepul', price_label: '0 so\'m', monthly_price_uzs: 0, features: [] },
+    { code: 'premium_monthly', title: 'Premium', price_label: '21 999 so\'m / oy', monthly_price_uzs: 21999, features: [] },
+  ];
+}
+
+function getFeatureGateResult(featureKey, context = {}) {
+  const snapshot = context.snapshot || getSubscriptionSnapshotLocal();
+  const record = context.record || subscriptionState.rawUser || {};
+  if (typeof subscriptionHelpers.evaluateFeatureGate === 'function') {
+    return subscriptionHelpers.evaluateFeatureGate(featureKey, record, {
+      ...context,
+      snapshot,
+      schemaReady: context.schemaReady ?? snapshot.schemaReady,
+    });
+  }
+  return {
+    allowed: true,
+    featureKey,
+    snapshot,
+    premiumBenefitKeys: [],
+    freeLimit: null,
+    usage: null,
+    remaining: null,
+    reason: null,
+    degraded: true,
+  };
 }
 
 function notificationStatusLabel(state = pushNotificationState) {
@@ -819,6 +933,264 @@ function errorText(error, fallback = '') {
   return fallback || 'Unknown error';
 }
 
+function formatSubscriptionDate(value) {
+  if (!value) return '—';
+  try {
+    return new Intl.DateTimeFormat(localeTag(), {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    }).format(new Date(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function extractUpgradeFeatureKey(error, fallbackFeatureKey = null) {
+  const raw = [
+    String(error?.details || ''),
+    String(error?.hint || ''),
+    String(error?.message || ''),
+    errorText(error, ''),
+  ].join(' ');
+  const match = raw.match(/upgrade_required:([a-z_]+)/i);
+  return match?.[1] || fallbackFeatureKey || null;
+}
+
+function getPaywallCopy(featureKey, gate) {
+  const feature = String(featureKey || '').trim();
+  if (feature === 'plan_create' || feature === 'limit_create') {
+    return {
+      title: tt('paywall_limit_title', 'Siz bepul tarif limitiga yetdingiz'),
+      body: tt('paywall_plan_body', 'Bepul tarifda faqat 1 ta faol reja va limit ishlatish mumkin. Premium orqali cheksiz reja, qarz, limit va kengaytirilgan hisobotlardan foydalanishingiz mumkin.'),
+    };
+  }
+  if (feature === 'debt_create') {
+    return {
+      title: tt('paywall_limit_title', 'Siz bepul tarif limitiga yetdingiz'),
+      body: tt('paywall_debt_body', 'Bepul tarifda faqat 1 ta faol qarz saqlanadi. Premium orqali cheksiz qarz, reja, limit va qulay eslatmalardan foydalanishingiz mumkin.'),
+    };
+  }
+  if (feature === 'custom_reminder_time') {
+    return {
+      title: tt('paywall_custom_reminder_title', 'Custom eslatma vaqti Premium tarifida'),
+      body: tt('paywall_custom_reminder_body', 'Bepul tarifda basic reminder ishlaydi. Premium bilan eslatma uchun istalgan sana va vaqtni alohida sozlashingiz mumkin.'),
+    };
+  }
+  if (feature === 'advanced_reports') {
+    return {
+      title: tt('paywall_reports_title', 'PDF hisobot Premium tarifida'),
+      body: tt('paywall_reports_body', 'Premium orqali PDF va Excel ko‘rinishidagi kengaytirilgan hisobotlarni yuklab olishingiz mumkin.'),
+    };
+  }
+  if (feature === 'daily_morning_reminder' || feature === 'daily_evening_reminder') {
+    return {
+      title: tt('paywall_reminders_title', 'Kunlik eslatmalar Premium tarifida'),
+      body: tt('paywall_reminders_body', 'Premium foydalanuvchilar ertalabgi va kechki eslatmalarni oladi. Bepul tarifda esa basic reminder saqlanib qoladi.'),
+    };
+  }
+  if (feature === 'deep_analytics' || feature === 'ai_insights') {
+    return {
+      title: tt('paywall_analytics_title', 'Kengaytirilgan analiz Premium tarifida'),
+      body: tt('paywall_analytics_body', 'Premium orqali chuqur statistika, kengaytirilgan analiz va AI bilan ishlaydigan qulayliklar ochiladi.'),
+    };
+  }
+  return {
+    title: tt('paywall_generic_title', 'Premium orqali ko‘proq imkoniyatlarga ega bo‘ling'),
+    body: tt('paywall_generic_body', 'Bu imkoniyat Premium tarifida mavjud. Premium orqali ko‘proq funksiyalar va yuqori limitlardan foydalanishingiz mumkin.'),
+  };
+}
+
+function renderSubscriptionFeatureList(targetId, items = []) {
+  const el = $(targetId);
+  if (!el) return;
+  el.innerHTML = (items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+}
+
+function getPremiumPlanActionLabel(snapshot) {
+  if (snapshot?.isPremium && snapshot?.planCode === 'premium_monthly') {
+    return tt('pricing_current_plan_action', 'Faol tarif');
+  }
+  if (snapshot?.effectiveStatus === 'expired') {
+    return tt('pricing_restore_premium', 'Premiumni qayta yoqish');
+  }
+  return tt('subscription_upgrade_action', 'Premium ga o‘tish');
+}
+
+function getLocalizedSubscriptionPlanTitle(snapshot) {
+  return snapshot?.planCode === 'premium_monthly'
+    ? tt('subscription_plan_premium', 'Premium')
+    : tt('subscription_plan_free', 'Bepul');
+}
+
+function getLocalizedSubscriptionStatusLabel(snapshot) {
+  if (snapshot?.effectiveStatus === 'trial') {
+    return tt('subscription_status_trial', 'Sinov muddati');
+  }
+  if (snapshot?.effectiveStatus === 'expired') {
+    return tt('subscription_status_expired', 'Obuna muddati tugagan');
+  }
+  if (snapshot?.effectiveStatus === 'active' || snapshot?.effectiveStatus === 'grace' || snapshot?.effectiveStatus === 'canceled') {
+    return tt('subscription_status_active', 'Obuna bo‘lgan');
+  }
+  return tt('subscription_status_free', 'Obuna bo‘lmagan');
+}
+
+function openSubscriptionPanel(source = 'settings') {
+  currentPaywallSource = source;
+  closeOv('ov-upgrade');
+  openStgSub('stg-sub-subscription');
+}
+
+function requestPremiumUpgrade(source = 'settings', featureKey = null) {
+  currentPaywallSource = source;
+  currentPaywallFeatureKey = featureKey || currentPaywallFeatureKey || null;
+  showErr(tt('subscription_contact_hint', 'Premium ulash uchun qo‘llab-quvvatlash bilan bog‘laning.'), 2600);
+  openSupport();
+}
+
+function handlePricingPlanAction(planCode) {
+  const snapshot = getSubscriptionSnapshotLocal();
+  if (planCode === 'free') {
+    showErr(tt('pricing_free_current', 'Sizda hozir bepul tarif faol.'));
+    return;
+  }
+  if (snapshot?.isPremium && snapshot?.planCode === 'premium_monthly') {
+    showErr(tt('pricing_current_plan_notice', 'Premium tarifi allaqachon faol.'));
+    return;
+  }
+  requestPremiumUpgrade('pricing', 'advanced_reports');
+}
+
+function updateSubscriptionUI() {
+  const snapshot = getSubscriptionSnapshotLocal();
+  const plans = getPricingPlansData();
+  const freePlan = plans.find((item) => item.code === 'free') || plans[0] || { features: [] };
+  const premiumPlan = plans.find((item) => item.code === 'premium_monthly') || plans[1] || { features: [] };
+  const statusText = getLocalizedSubscriptionStatusLabel(snapshot);
+  const planText = getLocalizedSubscriptionPlanTitle(snapshot);
+  const statusBadge = {
+    ...(snapshot?.badge || {}),
+    label: statusText,
+    tone: snapshot?.badge?.tone || (snapshot?.isPremium ? 'premium' : (snapshot?.effectiveStatus === 'expired' ? 'expired' : 'free')),
+  };
+  const priceText = snapshot?.priceLabel || '0 so\'m';
+  const startValue = formatSubscriptionDate(snapshot?.subscriptionStartAt);
+  const endValue = formatSubscriptionDate(snapshot?.accessUntil || snapshot?.subscriptionEndAt || snapshot?.trialEndAt || snapshot?.graceUntil);
+  const startRowVisible = !!snapshot?.subscriptionStartAt;
+  const endRowVisible = !!(snapshot?.accessUntil || snapshot?.subscriptionEndAt || snapshot?.trialEndAt || snapshot?.graceUntil);
+
+  const itemSub = $('stg-subscription-sub');
+  const itemBadge = $('stg-subscription-badge');
+  if (itemSub) {
+    itemSub.textContent = snapshot?.schemaReady === false
+      ? tt('subscription_syncing', 'Tarif ma\'lumotlari sinxronlanmoqda')
+      : `${planText} · ${statusText}`;
+  }
+  if (itemBadge) {
+    itemBadge.textContent = statusBadge.label || statusText;
+    itemBadge.dataset.state = statusBadge.tone || 'free';
+  }
+
+  const planEl = $('stg-subscription-plan');
+  const statusEl = $('stg-subscription-status');
+  const priceEl = $('stg-subscription-price');
+  const badgeEl = $('stg-subscription-status-badge');
+  const startRow = $('stg-subscription-start-row');
+  const endRow = $('stg-subscription-end-row');
+  const startEl = $('stg-subscription-start');
+  const endEl = $('stg-subscription-end');
+  const noteEl = $('stg-subscription-note');
+  if (planEl) planEl.textContent = planText;
+  if (statusEl) statusEl.textContent = statusText;
+  if (priceEl) priceEl.textContent = priceText;
+  if (badgeEl) {
+    badgeEl.textContent = statusBadge.label || statusText;
+    badgeEl.dataset.state = statusBadge.tone || 'free';
+  }
+  if (startRow) startRow.style.display = startRowVisible ? 'flex' : 'none';
+  if (endRow) endRow.style.display = endRowVisible ? 'flex' : 'none';
+  if (startEl) startEl.textContent = startValue;
+  if (endEl) endEl.textContent = endValue;
+  if (noteEl) {
+    noteEl.textContent = snapshot?.schemaReady === false
+      ? tt('subscription_syncing_hint', 'Tarif ma\'lumotlari bazadan yangilangach avtomatik ko‘rinadi.')
+      : (
+        snapshot?.isPremium
+          ? tt('subscription_premium_ready', 'Premium foydalanuvchi sifatida barcha premium gate funksiyalar ochiq.')
+          : tt('subscription_free_hint', 'Bepul tarifda 1 ta faol reja, 1 ta faol qarz va 1 ta faol limit mavjud.')
+      );
+  }
+
+  renderSubscriptionFeatureList('pricing-free-features', freePlan.features || []);
+  renderSubscriptionFeatureList('pricing-premium-features', premiumPlan.features || []);
+
+  const freeCard = $('pricing-card-free');
+  const premiumCard = $('pricing-card-premium');
+  const freeAction = $('pricing-free-action');
+  const premiumAction = $('pricing-premium-action');
+  if (freeCard) freeCard.classList.toggle('is-current', snapshot?.planCode === 'free');
+  if (premiumCard) premiumCard.classList.toggle('is-current', snapshot?.planCode === 'premium_monthly' && snapshot?.isPremium);
+  if (freeAction) {
+    freeAction.textContent = snapshot?.planCode === 'free'
+      ? tt('pricing_current_plan_action', 'Faol tarif')
+      : tt('pricing_free_action', 'Bepul tarif');
+    freeAction.disabled = snapshot?.planCode === 'free';
+  }
+  if (premiumAction) {
+    premiumAction.textContent = getPremiumPlanActionLabel(snapshot);
+    premiumAction.disabled = !!(snapshot?.isPremium && snapshot?.planCode === 'premium_monthly');
+  }
+
+  const currentPlanEl = $('upgrade-current-plan');
+  const currentStatusEl = $('upgrade-current-status');
+  if (currentPlanEl) currentPlanEl.textContent = planText;
+  if (currentStatusEl) currentStatusEl.textContent = statusText;
+}
+
+function openUpgradePaywall(featureKey, options = {}) {
+  currentPaywallFeatureKey = featureKey;
+  currentPaywallSource = options.source || currentPaywallSource || 'feature';
+  const gate = options.gate || getFeatureGateResult(featureKey, options);
+  const copy = getPaywallCopy(featureKey, gate);
+  const titleEl = $('upgrade-feature-title');
+  const bodyEl = $('upgrade-feature-body');
+  const badgeEl = $('upgrade-feature-badge');
+  const benefitsEl = $('upgrade-feature-benefits');
+
+  if (titleEl) titleEl.textContent = copy.title;
+  if (bodyEl) bodyEl.textContent = copy.body;
+  if (badgeEl) {
+    badgeEl.textContent = tt('subscription_upgrade_action', 'Premium ga o‘tish');
+    badgeEl.dataset.state = 'premium';
+  }
+  if (benefitsEl) {
+    const premiumPlan = getPricingPlansData().find((item) => item.code === 'premium_monthly');
+    benefitsEl.innerHTML = (premiumPlan?.features || []).slice(0, 4)
+      .map((item) => `<li>${escapeHtml(item)}</li>`)
+      .join('');
+  }
+
+  updateSubscriptionUI();
+  showOv('ov-upgrade');
+  return false;
+}
+
+function handleUpgradeRequiredError(error, fallbackFeatureKey = null, source = 'feature') {
+  const featureKey = extractUpgradeFeatureKey(error, fallbackFeatureKey);
+  if (!featureKey) return false;
+  openUpgradePaywall(featureKey, { source });
+  return true;
+}
+
+window.openSubscriptionPanel = openSubscriptionPanel;
+window.requestPremiumUpgrade = requestPremiumUpgrade;
+window.handlePricingPlanAction = handlePricingPlanAction;
+window.openUpgradePaywall = openUpgradePaywall;
+window.handleUpgradeRequiredError = handleUpgradeRequiredError;
+window.getFeatureGateResult = getFeatureGateResult;
+window.getSubscriptionSnapshot = getSubscriptionSnapshotLocal;
+
 function getTgUser() {
   return tg?.initDataUnsafe?.user || null;
 }
@@ -965,16 +1337,55 @@ function removeProfilePhoto() {
   renderProfileEditorUI();
 }
 
+function userFieldMissing(error, field) {
+  const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+  const target = String(field || '').toLowerCase();
+  return !!target && msg.includes(target) && (
+    msg.includes('schema cache') ||
+    msg.includes('does not exist') ||
+    msg.includes('unknown column') ||
+    msg.includes('could not find the column')
+  );
+}
+
 async function selectUserRow(extraFields = []) {
-  const baseFields = ['user_id', 'full_name', 'phone_number', ...extraFields];
-  const fields = Array.from(new Set([...(userAvatarColumnSupported === false ? [] : ['avatar_url']), ...baseFields])).join(', ');
-  let result = await db.from('users').select(fields).eq('user_id', UID).maybeSingle();
-  if (result.error && userAvatarColumnSupported !== false && /avatar_url/i.test(result.error.message || '')) {
-    userAvatarColumnSupported = false;
-    const fallbackFields = Array.from(new Set(baseFields)).join(', ');
-    result = await db.from('users').select(fallbackFields).eq('user_id', UID).maybeSingle();
-  } else if (!result.error && fields.includes('avatar_url')) {
-    userAvatarColumnSupported = true;
+  const requestedExtraFields = Array.from(new Set(extraFields));
+  const subscriptionFields = requestedExtraFields.filter((field) => SUBSCRIPTION_USER_FIELDS.includes(field));
+  const plainFields = requestedExtraFields.filter((field) => !SUBSCRIPTION_USER_FIELDS.includes(field));
+  let allowAvatar = userAvatarColumnSupported !== false;
+  let allowSubscription = userSubscriptionColumnsSupported !== false && subscriptionFields.length > 0;
+  let result = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const fields = Array.from(new Set([
+      ...(allowAvatar ? ['avatar_url'] : []),
+      'user_id',
+      'full_name',
+      'phone_number',
+      ...plainFields,
+      ...(allowSubscription ? subscriptionFields : []),
+    ])).join(', ');
+
+    result = await db.from('users').select(fields).eq('user_id', UID).maybeSingle();
+    if (!result.error) {
+      if (allowAvatar) userAvatarColumnSupported = true;
+      if (allowSubscription && subscriptionFields.length) userSubscriptionColumnsSupported = true;
+      break;
+    }
+
+    if (allowAvatar && userFieldMissing(result.error, 'avatar_url')) {
+      allowAvatar = false;
+      userAvatarColumnSupported = false;
+      continue;
+    }
+
+    if (allowSubscription && subscriptionFields.some((field) => userFieldMissing(result.error, field))) {
+      allowSubscription = false;
+      userSubscriptionColumnsSupported = false;
+      continue;
+    }
+
+    break;
   }
   return result;
 }
@@ -1025,6 +1436,7 @@ function renderProfileUI() {
   setAvatar('stg-avatar-edit', { photoUrl: getProfileEditPhotoUrl() });
   setAvatar('dash-avatar');
   renderProfileEditorUI();
+  updateSubscriptionUI();
 }
 
 function addMsg(text, isUser = false) {
@@ -1206,6 +1618,7 @@ async function ensureUser() {
     setProfileAvatarCache(row.avatar_url || '');
     store.set('display_name', profileState.fullName);
     resetProfileEditState();
+    syncSubscriptionState(row, { schemaReady: false });
     renderProfileUI();
     return;
   }
@@ -1220,17 +1633,19 @@ async function ensureUser() {
   }
 
   resetProfileEditState();
+  syncSubscriptionState(existing, { schemaReady: hasSubscriptionSchema(existing) });
   renderProfileUI();
 }
 
 async function loadData() {
-  const { data: u, error: ue } = await selectUserRow(['exchange_rate']);
+  const { data: u, error: ue } = await selectUserRow(['exchange_rate', ...SUBSCRIPTION_USER_FIELDS]);
   if (ue) throw ue;
 
   if (u?.exchange_rate) {
     rate = Number(u.exchange_rate) || rate;
     store.set('rate', rate);
   }
+  syncSubscriptionState(u || {}, { schemaReady: hasSubscriptionSchema(u) && userSubscriptionColumnsSupported !== false });
   if (u) {
     profileState.fullName = normalizeName(u.full_name) || profileState.fullName;
     profileState.phone = u.phone_number || profileState.phone || '';
@@ -2194,6 +2609,7 @@ function updateSettingsUI() {
   updateThemeIcon();
   updateAccentThemeUI();
   updateNotificationSettingsUI();
+  updateSubscriptionUI();
 }
 
 async function saveRate(v) {
@@ -2352,6 +2768,11 @@ function setExportPreset(preset) {
 }
 
 function openExport() {
+  const gate = getFeatureGateResult('advanced_reports');
+  if (!gate.allowed) {
+    closeOv('ov-settings');
+    return openUpgradePaywall(gate.featureKey, { gate, source: 'report' });
+  }
   closeOv('ov-settings');
   setExportPreset('month');
   $('ex-from').onchange = () => {
@@ -2534,7 +2955,9 @@ ${dataset.sStr.replaceAll('-', '.')} — ${dataset.eStr.replaceAll('-', '.')}`,
   try { payload = await resp.json(); } catch { }
   if (!resp.ok || payload?.ok === false) {
     console.warn('[sendReportFilesToBot]', payload || { status: resp.status });
-    throw new Error(payload?.error || `HTTP ${resp.status}`);
+    const error = new Error(payload?.error || `HTTP ${resp.status}`);
+    if (payload?.detail) error.details = payload.detail;
+    throw error;
   }
 }
 
@@ -2565,6 +2988,10 @@ async function notifyMiniAppTxSaved(row) {
 }
 
 function makePDF() {
+  const gate = getFeatureGateResult('advanced_reports');
+  if (!gate.allowed) {
+    return openUpgradePaywall(gate.featureKey, { gate, source: 'report' });
+  }
   const pdfMake = window.pdfMake;
   const createBtn = $('ex-create-btn');
   if (!pdfMake?.createPdf) {
@@ -2695,6 +3122,10 @@ function makePDF() {
       closeOv('ov-export');
     } catch (error) {
       console.warn('[makePDF]', error);
+      if (handleUpgradeRequiredError(error, 'advanced_reports', 'report')) {
+        closeOv('ov-export');
+        return;
+      }
       downloadPdfBlob(blob, fileName);
       downloadExcelBlob(excelBlob, excelFileName);
       showErr(currentLang === 'ru' ? 'Botga yuborilmadi. PDF va Excel yuklab olindi.' : currentLang === 'en' ? 'Sending to the bot failed. PDF and Excel were downloaded.' : "Botga yuborilmadi. PDF va Excel yuklab olindi.", 3400);
@@ -2842,6 +3273,9 @@ function openStgSub(id) {
   if (id === 'stg-sub-notifications') {
     updateNotificationSettingsUI();
     configurePushNotifications().catch(() => { });
+  }
+  if (id === 'stg-sub-subscription') {
+    updateSubscriptionUI();
   }
   if (id === 'stg-sub-terms') {
     const el = $('stg-terms-text');

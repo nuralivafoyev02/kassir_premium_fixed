@@ -138,7 +138,7 @@
           <button type="button" class="quick-chip" data-mode="30m" onclick="setDebtReminderPreset('30m')">30 daqiqa oldin</button>
           <button type="button" class="quick-chip" data-mode="1h" onclick="setDebtReminderPreset('1h')">1 soat oldin</button>
           <button type="button" class="quick-chip" data-mode="1d" onclick="setDebtReminderPreset('1d')">1 kun oldin</button>
-          <button type="button" class="quick-chip" data-mode="custom" onclick="setDebtReminderPreset('custom')">Qo'lda</button>
+          <button type="button" class="quick-chip" data-mode="custom" onclick="setDebtReminderPreset('custom')">Qo'lda · Premium</button>
         </div>
         <div class="debt-datetime-grid" id="debt-remind-custom-wrap" style="display:none">
           <div class="fld debt-inline-field"><label>Eslatma sanasi</label><input id="debt-remind-date" type="date"></div>
@@ -254,6 +254,34 @@
           id="ex-create-btn" onclick="makePDF()">Yaratish va yuborish</button></div>
     </div>
   </div>
+
+  <div class="ov center" id="ov-upgrade" onclick="closeOv('ov-upgrade',event)">
+    <div class="sheet c upgrade-modal" onclick="event.stopPropagation()">
+      <button class="sh-close" onclick="closeOv('ov-upgrade')">✕</button>
+      <span class="subscription-status-badge premium" id="upgrade-feature-badge">Premium ga o'tish</span>
+      <div class="sh-ttl" id="upgrade-feature-title">Premium orqali ko'proq imkoniyatlarga ega bo'ling</div>
+      <div class="upgrade-body" id="upgrade-feature-body">Bu imkoniyat Premium tarifida mavjud.</div>
+
+      <div class="upgrade-current-card">
+        <div>
+          <span data-i18n="subscription_my_plan">Tarifim</span>
+          <strong id="upgrade-current-plan">Bepul</strong>
+        </div>
+        <div>
+          <span data-i18n="subscription_status_label">Holat</span>
+          <strong id="upgrade-current-status">Obuna bo'lmagan</strong>
+        </div>
+      </div>
+
+      <ul class="upgrade-benefits" id="upgrade-feature-benefits"></ul>
+
+      <div class="mrow" style="margin-top:18px">
+        <button class="bcl" onclick="closeOv('ov-upgrade')" data-i18n="cancel">Bekor</button>
+        <button class="bpri" onclick="openSubscriptionPanel('paywall')" data-i18n="subscription_upgrade_action">Premium ga o'tish</button>
+      </div>
+    </div>
+  </div>
+
   <div class="ov" id="ov-settings" onclick="closeOv('ov-settings',event)">
     <div class="sheet stg-sheet" onclick="event.stopPropagation()">
       <div class="sh-hdl"></div>
@@ -280,10 +308,14 @@
           <div class="stg-txt" data-i18n="stg_edit_profile">Profilni tahrirlash</div>
           <div class="stg-arrow">›</div>
         </div>
-        <div class="stg-item stg-disabled">
+        <div class="stg-item" id="stg-subscription-item" onclick="openStgSub('stg-sub-subscription')">
           <div class="stg-ico">💎</div>
-          <div class="stg-txt" data-i18n="stg_subscription">Obuna holati</div>
-          <span class="stg-badge" data-i18n="stg_coming_soon">Tez kunda</span>
+          <div class="stg-info">
+            <div class="stg-txt" data-i18n="stg_subscription">Obuna holati</div>
+            <div class="stg-sub" id="stg-subscription-sub">Bepul · Obuna bo'lmagan</div>
+          </div>
+          <span class="stg-badge" id="stg-subscription-badge">Bepul</span>
+          <div class="stg-arrow">›</div>
         </div>
       </div>
 
@@ -460,6 +492,75 @@
       <div class="fld"><label data-i18n="new_cat_name">Ism</label><input id="stg-name-in" type="text"
           data-i18n-placeholder="profile_name_placeholder" placeholder="Ismingiz..."></div>
       <button class="bpri" style="width:100%;margin-top:16px" onclick="saveProfile()" data-i18n="save">Saqlash</button>
+    </div>
+  </div>
+
+  <div class="ov" id="stg-sub-subscription" onclick="closeOv('stg-sub-subscription',event)">
+    <div class="sheet stg-sheet subscription-sheet" onclick="event.stopPropagation()">
+      <div class="sh-hdl"></div>
+      <button class="sh-close" onclick="closeOv('stg-sub-subscription')">✕</button>
+      <div class="sh-ttl" data-i18n="stg_subscription">Obuna holati</div>
+
+      <div class="subscription-current-card">
+        <div class="subscription-current-top">
+          <div>
+            <div class="subscription-eyebrow" data-i18n="subscription_my_plan">Tarifim</div>
+            <h3 id="stg-subscription-plan">Bepul</h3>
+          </div>
+          <span class="subscription-status-badge" id="stg-subscription-status-badge">Obuna bo'lmagan</span>
+        </div>
+
+        <div class="subscription-meta-grid">
+          <div class="subscription-meta-item">
+            <span data-i18n="subscription_status_label">Holat</span>
+            <strong id="stg-subscription-status">Obuna bo'lmagan</strong>
+          </div>
+          <div class="subscription-meta-item">
+            <span data-i18n="subscription_price_label">Narx</span>
+            <strong id="stg-subscription-price">0 so'm</strong>
+          </div>
+          <div class="subscription-meta-item" id="stg-subscription-start-row" style="display:none">
+            <span data-i18n="subscription_start_label">Boshlangan sana</span>
+            <strong id="stg-subscription-start">—</strong>
+          </div>
+          <div class="subscription-meta-item" id="stg-subscription-end-row" style="display:none">
+            <span data-i18n="subscription_end_label">Tugash sana</span>
+            <strong id="stg-subscription-end">—</strong>
+          </div>
+        </div>
+
+        <div class="subscription-note" id="stg-subscription-note">Bepul tarifda 1 ta faol reja, 1 ta faol qarz va 1 ta faol limit mavjud.</div>
+      </div>
+
+      <div class="pricing-grid">
+        <article class="pricing-card" id="pricing-card-free">
+          <div class="pricing-card-top">
+            <div>
+              <div class="pricing-card-label" data-i18n="subscription_plan_free">Bepul</div>
+              <h3 data-i18n="subscription_plan_free">Bepul</h3>
+            </div>
+            <span class="pricing-card-chip" data-i18n="pricing_free_chip">Asosiy</span>
+          </div>
+          <div class="pricing-price">0 so'm</div>
+          <p class="pricing-card-copy" data-i18n="pricing_free_copy">Asosiy moliyaviy nazorat uchun yetarli boshlang'ich tarif.</p>
+          <ul class="pricing-feature-list" id="pricing-free-features"></ul>
+          <button type="button" class="bcl pricing-action-btn" id="pricing-free-action" onclick="handlePricingPlanAction('free')">Faol tarif</button>
+        </article>
+
+        <article class="pricing-card premium" id="pricing-card-premium">
+          <div class="pricing-card-top">
+            <div>
+              <div class="pricing-card-label" data-i18n="subscription_plan_premium">Premium</div>
+              <h3 data-i18n="subscription_plan_premium">Premium</h3>
+            </div>
+            <span class="pricing-card-chip premium" data-i18n="pricing_premium_chip">Eng ommabop</span>
+          </div>
+          <div class="pricing-price">21 999 so'm <span data-i18n="pricing_monthly_suffix">/ oy</span></div>
+          <p class="pricing-card-copy" data-i18n="pricing_premium_copy">Cheksiz limitlar, kengaytirilgan eslatmalar va premium hisobotlar uchun.</p>
+          <ul class="pricing-feature-list" id="pricing-premium-features"></ul>
+          <button type="button" class="bpri pricing-action-btn" id="pricing-premium-action" onclick="handlePricingPlanAction('premium_monthly')" data-i18n="subscription_upgrade_action">Premium ga o'tish</button>
+        </article>
+      </div>
     </div>
   </div>
 
